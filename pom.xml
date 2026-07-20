@@ -8,8 +8,8 @@
 		<version>3.5.14</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
-	<groupId>com.VyntraPaymentService</groupId>
-	<artifactId>Vyntra-Payment-Service</artifactId>
+	<groupId>com.x</groupId>
+	<artifactId>x-payment-service</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<name/>
 	<description/>

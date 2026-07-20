@@ -1,13 +1,13 @@
-package com.VyntraPaymentService;
+package com.x.payment;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class VyntraPaymentServiceApplication {
+public class XPaymentServiceApplication {
 
 	public static void main(String[] args) {
-		SpringApplication.run(VyntraPaymentServiceApplication.class, args);
+		SpringApplication.run(XPaymentServiceApplication.class, args);
 	}
 
 }

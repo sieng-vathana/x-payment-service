@@ -1,10 +1,10 @@
-package com.VyntraPaymentService;
+package com.x.payment;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
-class VyntraPaymentServiceApplicationTests {
+class XPaymentServiceApplicationTests {
 
 	@Test
 	void contextLoads() {
