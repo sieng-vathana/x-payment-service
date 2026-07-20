@@ -11,8 +11,8 @@
 	<groupId>com.x</groupId>
 	<artifactId>x-payment-service</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
-	<name/>
-	<description/>
+	<name>x-payment-service</name>
+<description/>
 	<url/>
 	<licenses>
 		<license/>
