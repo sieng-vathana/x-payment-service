@@ -1,3 +1,15 @@
 spring:
+  banner:
+    location: classpath:banner.txt
+    mode: console
   application:
     name: x-payment-service
+
+x:
+  http:
+    logging:
+      enabled: true
+      server: x-payment-service
+      hop: "x-api-gateway → x-bff → x-payment-service"
+      hops:
+        /api/v1/payments: "x-api-gateway → x-bff → x-payment-service"
