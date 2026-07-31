@@ -2,3 +2,14 @@ spring:
   config:
     activate:
       on-profile: local
+    import: optional:file:../config/secrets.yml
+  datasource:
+    url: jdbc:mysql://${db.dev.host}:${db.dev.port}/${db.dev.name}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: ${db.dev.username}
+    password: ${db.dev.password}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    show-sql: false
