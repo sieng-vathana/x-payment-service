@@ -28,6 +28,17 @@ public class PaymentController {
                 .body(ApiResponse.success(201, "Payment created", paymentService.create(request)));
     }
 
+    @PostMapping("/qr")
+    public ResponseEntity<ApiResponse<QrPaymentResponse>> createQr(
+            @Valid @RequestBody CreateQrPaymentRequest request) {
+        QrPaymentResponse response = paymentService.createQr(request);
+        if (response.reused()) {
+            return ResponseEntity.ok(ApiResponse.success(200, "QR payment already exists", response));
+        }
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success(201, "QR payment created", response));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<ApiResponse<PaymentResponse>> get(@PathVariable @Positive Long id) {
         return ResponseEntity.ok(ApiResponse.success(200, paymentService.get(id)));

@@ -2,6 +2,8 @@ package com.x.payment.service;
 
 import com.x.payment.dto.*;
 import com.x.payment.entity.*;
+import com.x.payment.gateway.QrPaymentGateway;
+import com.x.payment.gateway.QrPaymentInitiation;
 import com.x.payment.repository.PaymentRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -12,6 +14,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.Currency;
 import java.util.List;
@@ -22,6 +27,7 @@ import java.util.Locale;
 public class PaymentService {
     private static final BigDecimal ZERO = new BigDecimal("0.00");
     private final PaymentRepository paymentRepository;
+    private final QrPaymentGateway qrPaymentGateway;
 
     @Transactional
     public PaymentResponse create(CreatePaymentRequest request) {
@@ -30,24 +36,67 @@ public class PaymentService {
                 .orElseGet(() -> createNew(request));
     }
 
+    @Transactional
+    public QrPaymentResponse createQr(CreateQrPaymentRequest request) {
+        String idempotencyKey = request.idempotencyKey().trim();
+        return paymentRepository.findByIdempotencyKey(idempotencyKey)
+                .map(this::reuseQrPayment)
+                .orElseGet(() -> createNewQr(request, idempotencyKey));
+    }
+
+    private QrPaymentResponse createNewQr(CreateQrPaymentRequest request, String idempotencyKey) {
+        String currency = normalizeCurrency(request.currencyCode());
+        if (!currency.equals("USD")) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "This KHQRPay Direct API checkout supports only USD");
+        }
+        BigDecimal amount = money(request.amount());
+        String transactionId = transactionId(request.orderId(), idempotencyKey);
+        QrPaymentInitiation initiation = qrPaymentGateway.initiate(
+                transactionId, amount, trim(request.note()));
+        Payment payment = Payment.builder()
+                .orderId(request.orderId()).businessId(request.businessId()).storeId(request.storeId())
+                .amount(amount).tenderedAmount(null).changeAmount(ZERO).refundedAmount(ZERO)
+                .currencyCode(currency).method(PaymentMethod.QR).provider(PaymentProvider.KHQRPAY)
+                .status(PaymentStatus.PENDING).externalReference(initiation.transactionId())
+                .idempotencyKey(idempotencyKey).note(trim(request.note())).build();
+        return QrPaymentResponse.created(PaymentResponse.from(paymentRepository.save(payment)), initiation);
+    }
+
+    private QrPaymentResponse reuseQrPayment(Payment payment) {
+        if (payment.getMethod() != PaymentMethod.QR || payment.getProvider() != PaymentProvider.KHQRPAY) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, "Idempotency key already belongs to a different payment");
+        }
+        QrPaymentInitiation initiation = qrPaymentGateway.initiate(
+                payment.getExternalReference(), payment.getAmount(), payment.getNote());
+        return QrPaymentResponse.reused(PaymentResponse.from(payment), initiation);
+    }
+
     private PaymentResponse createNew(CreatePaymentRequest request) {
-        validateMethodAndProvider(request);
+        if (request.method() == PaymentMethod.QR) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "Create KHQRPay payments with POST /api/v1/payments/qr");
+        }
+        if (request.method() != PaymentMethod.CASH) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only cash and KHQRPay QR are supported");
+        }
+        validateCashProvider(request);
         String currency = normalizeCurrency(request.currencyCode());
         BigDecimal amount = money(request.amount());
-        boolean cash = request.method() == PaymentMethod.CASH;
         BigDecimal tendered = request.tenderedAmount() == null ? null : money(request.tenderedAmount());
-        if (cash && (tendered == null || tendered.compareTo(amount) < 0)) {
+        if (tendered == null || tendered.compareTo(amount) < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Cash tenderedAmount must be greater than or equal to amount");
         }
         Payment payment = Payment.builder()
                 .orderId(request.orderId()).businessId(request.businessId()).storeId(request.storeId())
                 .amount(amount).tenderedAmount(tendered)
-                .changeAmount(cash ? tendered.subtract(amount) : ZERO)
+                .changeAmount(tendered.subtract(amount))
                 .refundedAmount(ZERO).currencyCode(currency).method(request.method()).provider(request.provider())
-                .status(cash ? PaymentStatus.PAID : PaymentStatus.PENDING)
+                .status(PaymentStatus.PAID)
                 .externalReference(trim(request.externalReference())).idempotencyKey(request.idempotencyKey().trim())
-                .note(trim(request.note())).paidAt(cash ? LocalDateTime.now() : null).build();
+                .note(trim(request.note())).paidAt(LocalDateTime.now()).build();
         return PaymentResponse.from(paymentRepository.save(payment));
     }
 
@@ -65,6 +114,10 @@ public class PaymentService {
     @Transactional
     public PaymentResponse confirm(Long id, ConfirmPaymentRequest request) {
         Payment payment = find(id);
+        if (payment.getProvider() == PaymentProvider.KHQRPAY) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, "KHQRPay payments must be confirmed by provider verification");
+        }
         if (payment.getStatus() != PaymentStatus.PENDING) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only a pending payment can be confirmed");
         }
@@ -77,6 +130,10 @@ public class PaymentService {
     @Transactional
     public PaymentResponse refund(Long id, RefundPaymentRequest request) {
         Payment payment = find(id);
+        if (payment.getProvider() == PaymentProvider.KHQRPAY) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, "KHQRPay refunds must be completed through the receiving bank or provider");
+        }
         if (payment.getStatus() != PaymentStatus.PAID
                 && payment.getStatus() != PaymentStatus.PARTIALLY_REFUNDED) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only a paid payment can be refunded");
@@ -109,12 +166,9 @@ public class PaymentService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment not found"));
     }
 
-    private void validateMethodAndProvider(CreatePaymentRequest request) {
-        if (request.method() == PaymentMethod.CASH && request.provider() != PaymentProvider.NONE) {
+    private void validateCashProvider(CreatePaymentRequest request) {
+        if (request.provider() != PaymentProvider.NONE) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cash payment provider must be NONE");
-        }
-        if (request.method() != PaymentMethod.CASH && request.provider() == PaymentProvider.NONE) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "QR and card payments require a provider");
         }
     }
 
@@ -134,5 +188,19 @@ public class PaymentService {
 
     private String trim(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String transactionId(Long orderId, String idempotencyKey) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(idempotencyKey.getBytes(StandardCharsets.UTF_8));
+            StringBuilder suffix = new StringBuilder(16);
+            for (int index = 0; index < 8; index++) {
+                suffix.append(String.format("%02x", digest[index]));
+            }
+            return "XP-" + orderId + "-" + suffix;
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
     }
 }
