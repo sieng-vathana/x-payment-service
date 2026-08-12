@@ -18,6 +18,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -28,6 +30,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -79,6 +82,21 @@ class PaymentServiceTest {
         ArgumentCaptor<Payment> paymentCaptor = ArgumentCaptor.forClass(Payment.class);
         verify(paymentRepository).save(paymentCaptor.capture());
         assertThat(paymentCaptor.getValue().getCurrencyCode()).isEqualTo("USD");
+    }
+
+    @Test
+    void doesNotSavePendingPaymentWhenKhqrPayRejectsCheckout() {
+        CreateQrPaymentRequest request = new CreateQrPaymentRequest(
+                15L, 2L, 3L, new BigDecimal("12.50"), "USD", "checkout-rejected", null);
+        when(paymentRepository.findByIdempotencyKey("checkout-rejected")).thenReturn(Optional.empty());
+        when(qrPaymentGateway.initiate(anyString(), eq(new BigDecimal("12.50")), eq(null)))
+                .thenThrow(new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "KHQRPay rejected checkout: Invalid Security Hash"));
+
+        assertThatThrownBy(() -> paymentService.createQr(request))
+                .hasMessageContaining("Invalid Security Hash");
+        verify(paymentRepository, never()).save(any(Payment.class));
     }
 
     @Test
