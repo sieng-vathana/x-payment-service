@@ -3,6 +3,7 @@ package com.x.payment.gateway;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.x.payment.config.KhqrPayProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -29,6 +30,7 @@ public class KhqrPayGateway implements QrPaymentGateway {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
+    @Autowired
     public KhqrPayGateway(KhqrPayProperties properties) {
         this(
                 properties,

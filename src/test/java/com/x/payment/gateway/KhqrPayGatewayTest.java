@@ -4,6 +4,7 @@ import com.x.payment.config.KhqrPayProperties;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
@@ -84,6 +85,17 @@ class KhqrPayGatewayTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("Invalid Security Hash");
         assertThat(providerCalls).hasValue(1);
+    }
+
+    @Test
+    void createsGatewayThroughSpringUsingTheProductionConstructor() {
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(KhqrPayProperties.class);
+            context.register(KhqrPayGateway.class);
+            context.refresh();
+
+            assertThat(context.getBean(KhqrPayGateway.class)).isNotNull();
+        }
     }
 
     private String startProviderServer(int status, String body, AtomicInteger calls) throws IOException {
