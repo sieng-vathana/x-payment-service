@@ -17,4 +17,14 @@ class KhqrPaySignerTest {
 
         assertThat(signature).isEqualTo("3fbdf85398f5f3269985d7c29bc56bfa26141c5b");
     }
+
+    @Test
+    void verifiesWebhookHashWithAndWithoutRequestTime() {
+        String hash = signer.signWebhook("secret", "ORDER-1", "15.00", "PAID", "20260812203000");
+
+        assertThat(signer.verifyWebhook(
+                "secret", "ORDER-1", "15.00", "PAID", "20260812203000", hash)).isTrue();
+        assertThat(signer.verifyWebhook(
+                "secret", "ORDER-1", "15.00", "PAID", "20260812203000", "wrong")).isFalse();
+    }
 }

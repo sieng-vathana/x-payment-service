@@ -61,6 +61,13 @@ public class PaymentController {
         return ResponseEntity.ok(ApiResponse.success(200, "Payment refunded", paymentService.refund(id, request)));
     }
 
+    @PostMapping("/khqrpay/webhook")
+    public ResponseEntity<ApiResponse<PaymentResponse>> khqrPayWebhook(
+            @RequestBody KhqrPayWebhookRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                200, "KHQRPay webhook processed", paymentService.handleKhqrPayWebhook(request)));
+    }
+
     @GetMapping("/reports/breakdown")
     public ResponseEntity<ApiResponse<List<PaymentBreakdownResponse>>> breakdown(
             @RequestParam @Positive Long storeId,

@@ -11,6 +11,7 @@ import java.util.Optional;
 
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
     Optional<Payment> findByIdempotencyKey(String idempotencyKey);
+    Optional<Payment> findByExternalReference(String externalReference);
     List<Payment> findByOrderIdOrderByCreatedAtAsc(Long orderId);
 
     @Query("""

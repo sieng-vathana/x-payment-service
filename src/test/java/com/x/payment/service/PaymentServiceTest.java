@@ -3,8 +3,10 @@ package com.x.payment.service;
 import com.x.payment.dto.ConfirmPaymentRequest;
 import com.x.payment.dto.CreatePaymentRequest;
 import com.x.payment.dto.CreateQrPaymentRequest;
+import com.x.payment.dto.KhqrPayWebhookRequest;
 import com.x.payment.dto.PaymentResponse;
 import com.x.payment.dto.QrPaymentResponse;
+import com.x.payment.config.KhqrPayProperties;
 import com.x.payment.entity.Payment;
 import com.x.payment.entity.PaymentMethod;
 import com.x.payment.entity.PaymentProvider;
@@ -39,6 +41,8 @@ class PaymentServiceTest {
     private PaymentRepository paymentRepository;
     @Mock
     private QrPaymentGateway qrPaymentGateway;
+    @Mock
+    private KhqrPayProperties khqrPayProperties;
     @InjectMocks
     private PaymentService paymentService;
 
@@ -111,6 +115,41 @@ class PaymentServiceTest {
 
         assertThatThrownBy(() -> paymentService.confirm(99L, new ConfirmPaymentRequest("browser-success")))
                 .hasMessageContaining("provider verification");
+    }
+
+    @Test
+    void marksMatchingKhqrPayWebhookAsPaid() {
+        Payment payment = Payment.builder()
+                .id(99L)
+                .orderId(15L)
+                .amount(new BigDecimal("12.50"))
+                .method(PaymentMethod.QR)
+                .provider(PaymentProvider.KHQRPAY)
+                .status(PaymentStatus.PENDING)
+                .externalReference("XP-15-reference")
+                .build();
+        when(khqrPayProperties.getMerchantSecret()).thenReturn("secret");
+        when(paymentRepository.findByExternalReference("XP-15-reference")).thenReturn(Optional.of(payment));
+        when(paymentRepository.save(payment)).thenReturn(payment);
+
+        PaymentResponse response = paymentService.handleKhqrPayWebhook(new KhqrPayWebhookRequest(
+                null, "XP-15-reference", null, "12.50", "PAID", "20260812203000",
+                "544ee85147bd785392fd9c560b97c28c45f38817"));
+
+        assertThat(response.status()).isEqualTo(PaymentStatus.PAID);
+        assertThat(response.paidAt()).isNotNull();
+        verify(paymentRepository).save(payment);
+    }
+
+    @Test
+    void rejectsKhqrPayWebhookWithWrongHashBeforeLookingUpPayment() {
+        when(khqrPayProperties.getMerchantSecret()).thenReturn("secret");
+
+        assertThatThrownBy(() -> paymentService.handleKhqrPayWebhook(new KhqrPayWebhookRequest(
+                "XP-15-reference", null, "12.50", null, "PAID", "20260812203000", "wrong")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Invalid KHQRPay webhook hash");
+        verify(paymentRepository, never()).findByExternalReference(anyString());
     }
 
     @Test

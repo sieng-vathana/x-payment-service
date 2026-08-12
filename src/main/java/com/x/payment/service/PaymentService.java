@@ -1,9 +1,11 @@
 package com.x.payment.service;
 
 import com.x.payment.dto.*;
+import com.x.payment.config.KhqrPayProperties;
 import com.x.payment.entity.*;
 import com.x.payment.gateway.QrPaymentGateway;
 import com.x.payment.gateway.QrPaymentInitiation;
+import com.x.payment.gateway.KhqrPaySigner;
 import com.x.payment.repository.PaymentRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -28,6 +30,8 @@ public class PaymentService {
     private static final BigDecimal ZERO = new BigDecimal("0.00");
     private final PaymentRepository paymentRepository;
     private final QrPaymentGateway qrPaymentGateway;
+    private final KhqrPayProperties khqrPayProperties;
+    private final KhqrPaySigner khqrPaySigner = new KhqrPaySigner();
 
     @Transactional
     public PaymentResponse create(CreatePaymentRequest request) {
@@ -128,6 +132,49 @@ public class PaymentService {
     }
 
     @Transactional
+    public PaymentResponse handleKhqrPayWebhook(KhqrPayWebhookRequest request) {
+        String transactionId = requiredWebhookValue(
+                request.transactionReference(), "transaction_id");
+        String amountText = requiredWebhookValue(request.amountText(), "amount");
+        String status = requiredWebhookValue(request.status(), "status");
+
+        if (!khqrPaySigner.verifyWebhook(
+                requiredWebhookValue(khqrPayProperties.getMerchantSecret(), "merchant secret"),
+                transactionId,
+                amountText,
+                status,
+                request.requestTime(),
+                request.hash())) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid KHQRPay webhook hash");
+        }
+
+        Payment payment = paymentRepository.findByExternalReference(transactionId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "KHQRPay transaction not found"));
+        if (payment.getProvider() != PaymentProvider.KHQRPAY || payment.getMethod() != PaymentMethod.QR) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Transaction is not a KHQRPay QR payment");
+        }
+
+        BigDecimal paidAmount;
+        try {
+            paidAmount = new BigDecimal(amountText);
+        } catch (NumberFormatException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid KHQRPay amount");
+        }
+        if (paidAmount.compareTo(payment.getAmount()) != 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "KHQRPay amount does not match the payment");
+        }
+
+        if (!isSuccessfulKhqrPayStatus(status) || payment.getStatus() == PaymentStatus.PAID) {
+            return PaymentResponse.from(payment);
+        }
+
+        payment.setStatus(PaymentStatus.PAID);
+        payment.setPaidAt(LocalDateTime.now());
+        return PaymentResponse.from(paymentRepository.save(payment));
+    }
+
+    @Transactional
     public PaymentResponse refund(Long id, RefundPaymentRequest request) {
         Payment payment = find(id);
         if (payment.getProvider() == PaymentProvider.KHQRPAY) {
@@ -202,5 +249,19 @@ public class PaymentService {
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is unavailable", exception);
         }
+    }
+
+    private boolean isSuccessfulKhqrPayStatus(String status) {
+        return switch (status.trim().toUpperCase(Locale.ROOT)) {
+            case "PAID", "SUCCESS", "SUCCEEDED", "COMPLETED", "CAPTURED" -> true;
+            default -> false;
+        };
+    }
+
+    private String requiredWebhookValue(String value, String field) {
+        if (!StringUtils.hasText(value)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "KHQRPay webhook is missing " + field);
+        }
+        return value.trim();
     }
 }
