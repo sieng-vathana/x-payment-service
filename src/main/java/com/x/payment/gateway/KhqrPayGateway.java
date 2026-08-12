@@ -8,6 +8,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.math.BigDecimal;
+import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -27,7 +28,7 @@ public class KhqrPayGateway implements QrPaymentGateway {
     public QrPaymentInitiation initiate(String transactionId, BigDecimal amount, String items) {
         requireConfiguration();
         String merchantSecret = properties.getMerchantSecret().trim();
-        String successUrl = properties.getSuccessUrl().trim();
+        String successUrl = absoluteCallbackUrl(properties.getSuccessUrl());
         String paymentRequestId = properties.getPaymentRequestId().trim();
         String encodedItems = encodeItemsWhenRequired(items);
         String hash = signer.sign(
@@ -48,7 +49,7 @@ public class KhqrPayGateway implements QrPaymentGateway {
             addQueryParameter(query, "items", encodedItems);
         }
         if (StringUtils.hasText(properties.getCancelUrl())) {
-            addQueryParameter(query, "cancel_url", properties.getCancelUrl().trim());
+            addQueryParameter(query, "cancel_url", absoluteCallbackUrl(properties.getCancelUrl()));
         }
 
         return new QrPaymentInitiation(
@@ -57,6 +58,23 @@ public class KhqrPayGateway implements QrPaymentGateway {
                 null,
                 endpoint + "?" + query,
                 null);
+    }
+
+    private String absoluteCallbackUrl(String configuredUrl) {
+        String callbackUrl = configuredUrl.trim();
+        URI callbackUri = URI.create(callbackUrl);
+        if (callbackUri.isAbsolute()) {
+            return callbackUrl;
+        }
+
+        String publicOrigin = properties.getPublicOrigin().trim();
+        URI publicUri = URI.create(publicOrigin.endsWith("/") ? publicOrigin : publicOrigin + "/");
+        if (!publicUri.isAbsolute()) {
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "KHQRPay public origin must be an absolute URL");
+        }
+        return publicUri.resolve(callbackUri).toString();
     }
 
     private void addQueryParameter(StringJoiner query, String name, String value) {

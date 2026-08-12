@@ -9,6 +9,7 @@ import java.util.List;
 @ConfigurationProperties(prefix = "khqrpay")
 public class KhqrPayProperties {
     private String baseUrl = "https://khqr.cc";
+    private String publicOrigin = "https://portal.learner-teach.online";
     private String paymentRequestId;
     private String merchantSecret;
     private String successUrl;
@@ -20,6 +21,14 @@ public class KhqrPayProperties {
 
     public void setBaseUrl(String baseUrl) {
         this.baseUrl = baseUrl;
+    }
+
+    public String getPublicOrigin() {
+        return publicOrigin;
+    }
+
+    public void setPublicOrigin(String publicOrigin) {
+        this.publicOrigin = publicOrigin;
     }
 
     public String getPaymentRequestId() {
