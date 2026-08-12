@@ -11,9 +11,9 @@ class KhqrPayGatewayTest {
     @Test
     void createsSignedManagedCheckoutUrl() {
         KhqrPayProperties properties = new KhqrPayProperties();
-        properties.setPaymentRequestId("request-id");
-        properties.setMerchantSecret("secret");
-        properties.setSuccessUrl("https://shop.example/success");
+        properties.setPaymentRequestId(" request-id ");
+        properties.setMerchantSecret(" secret ");
+        properties.setSuccessUrl(" https://shop.example/success ");
         properties.setCancelUrl("https://shop.example/cancel");
         KhqrPayGateway gateway = new KhqrPayGateway(properties);
 

@@ -26,21 +26,23 @@ public class KhqrPayGateway implements QrPaymentGateway {
     @Override
     public QrPaymentInitiation initiate(String transactionId, BigDecimal amount, String items) {
         requireConfiguration();
+        String merchantSecret = properties.getMerchantSecret().trim();
+        String successUrl = properties.getSuccessUrl().trim();
+        String paymentRequestId = properties.getPaymentRequestId().trim();
         String encodedItems = encodeItemsWhenRequired(items);
         String hash = signer.sign(
-                properties.getMerchantSecret(), transactionId, amount,
-                properties.getSuccessUrl(), encodedItems);
+                merchantSecret, transactionId, amount, successUrl, encodedItems);
 
         String endpoint = UriComponentsBuilder
                 .fromUriString(properties.getBaseUrl())
-                .pathSegment("api", "payment", "request", properties.getPaymentRequestId())
+                .pathSegment("api", "payment", "request", paymentRequestId)
                 .build()
                 .encode(StandardCharsets.UTF_8)
                 .toUriString();
         StringJoiner query = new StringJoiner("&");
         addQueryParameter(query, "transaction_id", transactionId);
         addQueryParameter(query, "amount", amount.toPlainString());
-        addQueryParameter(query, "success_url", properties.getSuccessUrl());
+        addQueryParameter(query, "success_url", successUrl);
         addQueryParameter(query, "hash", hash);
         if (StringUtils.hasText(encodedItems)) {
             addQueryParameter(query, "items", encodedItems);
