@@ -1,5 +1,7 @@
 package com.x.payment.gateway;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.x.payment.config.KhqrPayProperties;
@@ -13,15 +15,12 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.math.BigDecimal;
 import java.io.IOException;
 import java.net.URI;
-import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Base64;
 import java.util.List;
-import java.util.StringJoiner;
 
 @Component
 public class KhqrPayGateway implements QrPaymentGateway {
@@ -48,63 +47,71 @@ public class KhqrPayGateway implements QrPaymentGateway {
     }
 
     @Override
-    public QrPaymentInitiation initiate(String transactionId, BigDecimal amount, String items) {
+    public QrPaymentInitiation initiate(String transactionId, BigDecimal amount, String remark) {
         requireConfiguration();
         String merchantSecret = properties.getMerchantSecret().trim();
         String successUrl = absoluteCallbackUrl(properties.getSuccessUrl());
         String paymentRequestId = properties.getPaymentRequestId().trim();
-        String encodedItems = encodeItemsWhenRequired(items);
+        String normalizedRemark = StringUtils.hasText(remark) ? remark.trim() : "";
         String hash = signer.sign(
-                merchantSecret, transactionId, amount, successUrl, encodedItems);
+                merchantSecret, transactionId, amount, successUrl, normalizedRemark);
 
-        String endpoint = UriComponentsBuilder
+        URI endpoint = UriComponentsBuilder
                 .fromUriString(properties.getBaseUrl())
-                .pathSegment("api", "payment", "request", paymentRequestId)
+                .pathSegment("api", paymentRequestId, "payment-gateway", "v1", "payments", "qr-api")
                 .build()
                 .encode(StandardCharsets.UTF_8)
-                .toUriString();
-        StringJoiner query = new StringJoiner("&");
-        addQueryParameter(query, "transaction_id", transactionId);
-        addQueryParameter(query, "amount", amount.toPlainString());
-        addQueryParameter(query, "success_url", successUrl);
-        addQueryParameter(query, "hash", hash);
-        if (StringUtils.hasText(encodedItems)) {
-            addQueryParameter(query, "items", encodedItems);
-        }
-        if (StringUtils.hasText(properties.getCancelUrl())) {
-            addQueryParameter(query, "cancel_url", absoluteCallbackUrl(properties.getCancelUrl()));
-        }
-
-        String checkoutUrl = endpoint + "?" + query;
-        verifyCheckoutAccepted(checkoutUrl);
-
-        return new QrPaymentInitiation(
+                .toUri();
+        KhqrPayRequest providerRequest = new KhqrPayRequest(
                 transactionId,
-                null,
-                null,
-                checkoutUrl,
-                null);
+                amount.toPlainString(),
+                successUrl,
+                normalizedRemark,
+                hash);
+
+        return requestQr(endpoint, providerRequest);
     }
 
-    private void verifyCheckoutAccepted(String checkoutUrl) {
-        HttpRequest request = HttpRequest.newBuilder(URI.create(checkoutUrl))
+    private QrPaymentInitiation requestQr(URI endpoint, KhqrPayRequest providerRequest) {
+        String requestBody;
+        try {
+            requestBody = objectMapper.writeValueAsString(providerRequest);
+        } catch (JsonProcessingException exception) {
+            throw providerUnavailable(exception);
+        }
+
+        HttpRequest request = HttpRequest.newBuilder(endpoint)
                 .timeout(Duration.ofSeconds(10))
-                .header("Accept", "text/html,application/json")
-                .GET()
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
                 .build();
         try {
             HttpResponse<String> response = httpClient.send(
                     request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             KhqrPayResponse providerResponse = parseProviderResponse(response.body());
-            if (providerResponse.responseCode() != null && providerResponse.responseCode() != 0) {
-                throw rejectedCheckout(providerResponse.responseMessage());
-            }
-            if (response.statusCode() < 200 || response.statusCode() >= 400) {
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 String message = StringUtils.hasText(providerResponse.responseMessage())
                         ? providerResponse.responseMessage()
                         : "HTTP " + response.statusCode();
                 throw rejectedCheckout(message);
             }
+            if (providerResponse.responseCode() == null) {
+                throw rejectedCheckout("Invalid response from provider");
+            }
+            if (providerResponse.responseCode() != 0) {
+                throw rejectedCheckout(providerResponse.responseMessage());
+            }
+            if (!StringUtils.hasText(providerResponse.qr())) {
+                throw rejectedCheckout("Provider did not return a QR payload");
+            }
+
+            return new QrPaymentInitiation(
+                    providerRequest.transactionId(),
+                    providerResponse.qr(),
+                    providerResponse.qrUrl(),
+                    null,
+                    null);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw providerUnavailable(exception);
@@ -115,18 +122,29 @@ public class KhqrPayGateway implements QrPaymentGateway {
 
     private KhqrPayResponse parseProviderResponse(String body) {
         if (!StringUtils.hasText(body)) {
-            return new KhqrPayResponse(null, null);
+            return new KhqrPayResponse(null, null, null, null);
         }
         try {
             JsonNode response = objectMapper.readTree(body);
             JsonNode responseCode = response.get("responseCode");
             JsonNode responseMessage = response.get("responseMessage");
+            JsonNode data = response.get("data");
             return new KhqrPayResponse(
                     responseCode == null || responseCode.isNull() ? null : responseCode.asInt(),
-                    responseMessage == null || responseMessage.isNull() ? null : responseMessage.asText());
+                    responseMessage == null || responseMessage.isNull() ? null : responseMessage.asText(),
+                    textValue(data, "qr"),
+                    textValue(data, "qr_url"));
         } catch (IOException ignored) {
-            return new KhqrPayResponse(null, null);
+            return new KhqrPayResponse(null, null, null, null);
         }
+    }
+
+    private String textValue(JsonNode parent, String fieldName) {
+        if (parent == null || parent.isNull()) {
+            return null;
+        }
+        JsonNode value = parent.get(fieldName);
+        return value == null || value.isNull() ? null : value.asText();
     }
 
     private ResponseStatusException rejectedCheckout(String providerMessage) {
@@ -145,7 +163,19 @@ public class KhqrPayGateway implements QrPaymentGateway {
                 cause);
     }
 
-    private record KhqrPayResponse(Integer responseCode, String responseMessage) {
+    private record KhqrPayRequest(
+            @JsonProperty("transaction_id") String transactionId,
+            String amount,
+            @JsonProperty("success_url") String successUrl,
+            String remark,
+            String hash) {
+    }
+
+    private record KhqrPayResponse(
+            Integer responseCode,
+            String responseMessage,
+            String qr,
+            String qrUrl) {
     }
 
     private String absoluteCallbackUrl(String configuredUrl) {
@@ -163,30 +193,6 @@ public class KhqrPayGateway implements QrPaymentGateway {
                     "KHQRPay public origin must be an absolute URL");
         }
         return publicUri.resolve(callbackUri).toString();
-    }
-
-    private void addQueryParameter(StringJoiner query, String name, String value) {
-        query.add(name + "=" + URLEncoder.encode(value, StandardCharsets.UTF_8));
-    }
-
-    private String encodeItemsWhenRequired(String items) {
-        if (!StringUtils.hasText(items)) {
-            return "";
-        }
-        String normalized = items.trim();
-        if (containsNonAscii(normalized) || looksLikeJson(normalized)) {
-            return Base64.getEncoder().encodeToString(normalized.getBytes(StandardCharsets.UTF_8));
-        }
-        return normalized;
-    }
-
-    private boolean containsNonAscii(String value) {
-        return value.chars().anyMatch(character -> character > 127);
-    }
-
-    private boolean looksLikeJson(String value) {
-        return (value.startsWith("{") && value.endsWith("}"))
-                || (value.startsWith("[") && value.endsWith("]"));
     }
 
     private void requireConfiguration() {

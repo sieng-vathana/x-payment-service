@@ -1,5 +1,7 @@
 package com.x.payment.gateway;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.x.payment.config.KhqrPayProperties;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -12,6 +14,7 @@ import java.math.BigDecimal;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -27,9 +30,23 @@ class KhqrPayGatewayTest {
     }
 
     @Test
-    void createsSignedManagedCheckoutUrl() throws IOException {
+    void postsSignedQrRequestAndReturnsQrData() throws IOException {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicReference<CapturedRequest> capturedRequest = new AtomicReference<>();
         KhqrPayProperties properties = new KhqrPayProperties();
-        properties.setBaseUrl(startProviderServer(200, "<html>Checkout</html>", new AtomicInteger()));
+        properties.setBaseUrl(startProviderServer(
+                200,
+                """
+                        {"responseCode":0,"responseMessage":"Success","data":{
+                          "transaction_id":"ORDER-1",
+                          "amount":"15.00",
+                          "qr":"khqr-payload",
+                          "qr_url":"https://khqr.cc/api/khqr/ORDER-1",
+                          "md5":"payment-md5"
+                        }}
+                        """,
+                providerCalls,
+                capturedRequest));
         properties.setPaymentRequestId(" request-id ");
         properties.setMerchantSecret(" secret ");
         properties.setSuccessUrl(" https://shop.example/success ");
@@ -39,33 +56,46 @@ class KhqrPayGatewayTest {
         QrPaymentInitiation initiation = gateway.initiate(
                 "ORDER-1", new BigDecimal("15.00"), "Coffee");
 
-        assertThat(initiation.checkoutUrl())
-                .startsWith(properties.getBaseUrl() + "/api/payment/request/request-id?")
-                .contains("transaction_id=ORDER-1")
-                .contains("amount=15.00")
-                .contains("success_url=https%3A%2F%2Fshop.example%2Fsuccess")
-                .contains("items=Coffee")
-                .contains("cancel_url=https%3A%2F%2Fshop.example%2Fcancel")
-                .contains("hash=3fbdf85398f5f3269985d7c29bc56bfa26141c5b");
+        assertThat(providerCalls).hasValue(1);
+        assertThat(capturedRequest.get().method()).isEqualTo("POST");
+        assertThat(capturedRequest.get().contentType()).isEqualTo("application/json");
+        JsonNode requestBody = new ObjectMapper().readTree(capturedRequest.get().body());
+        assertThat(requestBody.get("transaction_id").asText()).isEqualTo("ORDER-1");
+        assertThat(requestBody.get("amount").asText()).isEqualTo("15.00");
+        assertThat(requestBody.get("success_url").asText()).isEqualTo("https://shop.example/success");
+        assertThat(requestBody.get("remark").asText()).isEqualTo("Coffee");
+        assertThat(requestBody.get("hash").asText())
+                .isEqualTo("3fbdf85398f5f3269985d7c29bc56bfa26141c5b");
+        assertThat(initiation.transactionId()).isEqualTo("ORDER-1");
+        assertThat(initiation.qrPayload()).isEqualTo("khqr-payload");
+        assertThat(initiation.qrImageUrl()).isEqualTo("https://khqr.cc/api/khqr/ORDER-1");
+        assertThat(initiation.checkoutUrl()).isNull();
     }
 
     @Test
     void resolvesRelativeCallbackPathsBeforeSigningAndSending() throws IOException {
+        AtomicReference<CapturedRequest> capturedRequest = new AtomicReference<>();
         KhqrPayProperties properties = new KhqrPayProperties();
-        properties.setBaseUrl(startProviderServer(200, "<html>Checkout</html>", new AtomicInteger()));
+        properties.setBaseUrl(startProviderServer(
+                200,
+                "{\"responseCode\":0,\"responseMessage\":\"Success\",\"data\":{\"qr\":\"payload\"}}",
+                new AtomicInteger(),
+                capturedRequest));
         properties.setPaymentRequestId("request-id");
         properties.setMerchantSecret("secret");
         properties.setSuccessUrl("/sales/payments");
         properties.setCancelUrl("/sales/payments");
         KhqrPayGateway gateway = new KhqrPayGateway(properties);
 
-        QrPaymentInitiation initiation = gateway.initiate(
+        gateway.initiate(
                 "XP-1555-9f18694ed569a8db", new BigDecimal("1.00"), null);
 
-        assertThat(initiation.checkoutUrl())
-                .contains("success_url=https%3A%2F%2Fportal.learner-teach.online%2Fsales%2Fpayments")
-                .contains("cancel_url=https%3A%2F%2Fportal.learner-teach.online%2Fsales%2Fpayments")
-                .contains("hash=3a97b18212e9563e3020c1320acc3a75356bdd51");
+        JsonNode requestBody = new ObjectMapper().readTree(capturedRequest.get().body());
+        assertThat(requestBody.get("success_url").asText())
+                .isEqualTo("https://portal.learner-teach.online/sales/payments");
+        assertThat(requestBody.get("remark").asText()).isEmpty();
+        assertThat(requestBody.get("hash").asText())
+                .isEqualTo("3a97b18212e9563e3020c1320acc3a75356bdd51");
     }
 
     @Test
@@ -75,7 +105,8 @@ class KhqrPayGatewayTest {
         properties.setBaseUrl(startProviderServer(
                 403,
                 "{\"responseCode\":1,\"responseMessage\":\"Invalid Security Hash\"}",
-                providerCalls));
+                providerCalls,
+                new AtomicReference<>()));
         properties.setPaymentRequestId("request-id");
         properties.setMerchantSecret("secret");
         properties.setSuccessUrl("https://shop.example/success");
@@ -98,10 +129,18 @@ class KhqrPayGatewayTest {
         }
     }
 
-    private String startProviderServer(int status, String body, AtomicInteger calls) throws IOException {
+    private String startProviderServer(
+            int status,
+            String body,
+            AtomicInteger calls,
+            AtomicReference<CapturedRequest> capturedRequest) throws IOException {
         providerServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        providerServer.createContext("/api/payment/request/request-id", exchange -> {
+        providerServer.createContext("/api/request-id/payment-gateway/v1/payments/qr-api", exchange -> {
             calls.incrementAndGet();
+            capturedRequest.set(new CapturedRequest(
+                    exchange.getRequestMethod(),
+                    exchange.getRequestHeaders().getFirst("Content-Type"),
+                    new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
             byte[] response = body.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(status, response.length);
@@ -110,5 +149,8 @@ class KhqrPayGatewayTest {
         });
         providerServer.start();
         return "http://127.0.0.1:" + providerServer.getAddress().getPort();
+    }
+
+    private record CapturedRequest(String method, String contentType, String body) {
     }
 }
