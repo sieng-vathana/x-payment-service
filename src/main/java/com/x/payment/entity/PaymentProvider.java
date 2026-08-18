@@ -6,5 +6,6 @@ public enum PaymentProvider {
     ACLEDA,
     BAKONG,
     KHQRPAY,
+    SIMULATED,
     OTHER
 }

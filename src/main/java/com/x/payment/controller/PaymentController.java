@@ -39,6 +39,13 @@ public class PaymentController {
                 .body(ApiResponse.success(201, "QR payment created", response));
     }
 
+    @PostMapping("/simulated-qr")
+    public ResponseEntity<ApiResponse<QrPaymentResponse>> createSimulatedQr(
+            @Valid @RequestBody CreateQrPaymentRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success(201, "Simulated QR payment created", paymentService.createSimulatedQr(request)));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<ApiResponse<PaymentResponse>> get(@PathVariable @Positive Long id) {
         return ResponseEntity.ok(ApiResponse.success(200, paymentService.get(id)));
@@ -66,6 +73,12 @@ public class PaymentController {
             @RequestBody KhqrPayWebhookRequest request) {
         return ResponseEntity.ok(ApiResponse.success(
                 200, "KHQRPay webhook processed", paymentService.handleKhqrPayWebhook(request)));
+    }
+
+    @PostMapping("/{id}/simulate-callback")
+    public ResponseEntity<ApiResponse<PaymentResponse>> simulateCallback(@PathVariable @Positive Long id) {
+        return ResponseEntity.ok(ApiResponse.success(
+                200, "Simulated payment callback processed", paymentService.simulateCallback(id)));
     }
 
     @GetMapping("/reports/breakdown")

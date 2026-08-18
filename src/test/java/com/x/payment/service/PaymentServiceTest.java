@@ -24,6 +24,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -86,6 +87,60 @@ class PaymentServiceTest {
         ArgumentCaptor<Payment> paymentCaptor = ArgumentCaptor.forClass(Payment.class);
         verify(paymentRepository).save(paymentCaptor.capture());
         assertThat(paymentCaptor.getValue().getCurrencyCode()).isEqualTo("USD");
+    }
+
+    @Test
+    void createsPendingSimulatedPaymentWithoutCallingProvider() {
+        CreateQrPaymentRequest request = new CreateQrPaymentRequest(
+                15L, 2L, 3L, new BigDecimal("12.50"), "USD", "simulated-checkout", "Demo payment");
+        when(paymentRepository.findByIdempotencyKey("simulated-checkout")).thenReturn(Optional.empty());
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> {
+            Payment payment = invocation.getArgument(0);
+            payment.setId(100L);
+            return payment;
+        });
+
+        QrPaymentResponse response = paymentService.createSimulatedQr(request);
+
+        assertThat(response.payment().provider()).isEqualTo(PaymentProvider.SIMULATED);
+        assertThat(response.payment().status()).isEqualTo(PaymentStatus.PENDING);
+        assertThat(response.transactionId()).startsWith("SIM-15-");
+        assertThat(response.qrImageUrl()).startsWith("data:image/svg+xml;base64,");
+    }
+
+    @Test
+    void simulatedCallbackMarksAnOldPendingPaymentAsPaid() {
+        Payment payment = Payment.builder()
+                .id(100L)
+                .method(PaymentMethod.QR)
+                .provider(PaymentProvider.SIMULATED)
+                .status(PaymentStatus.PENDING)
+                .createdAt(LocalDateTime.now().minusSeconds(3))
+                .build();
+        when(paymentRepository.findById(100L)).thenReturn(Optional.of(payment));
+        when(paymentRepository.save(payment)).thenReturn(payment);
+
+        PaymentResponse response = paymentService.simulateCallback(100L);
+
+        assertThat(response.status()).isEqualTo(PaymentStatus.PAID);
+        assertThat(response.paidAt()).isNotNull();
+        verify(paymentRepository).save(payment);
+    }
+
+    @Test
+    void simulatedCallbackRejectsPaymentBeforeTheTwoSecondDelay() {
+        Payment payment = Payment.builder()
+                .id(100L)
+                .method(PaymentMethod.QR)
+                .provider(PaymentProvider.SIMULATED)
+                .status(PaymentStatus.PENDING)
+                .createdAt(LocalDateTime.now())
+                .build();
+        when(paymentRepository.findById(100L)).thenReturn(Optional.of(payment));
+
+        assertThatThrownBy(() -> paymentService.simulateCallback(100L))
+                .hasMessageContaining("not ready yet");
+        verify(paymentRepository, never()).save(any(Payment.class));
     }
 
     @Test

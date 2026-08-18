@@ -19,7 +19,9 @@ import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Base64;
 import java.util.Currency;
 import java.util.List;
 import java.util.Locale;
@@ -28,6 +30,9 @@ import java.util.Locale;
 @RequiredArgsConstructor
 public class PaymentService {
     private static final BigDecimal ZERO = new BigDecimal("0.00");
+    private static final long SIMULATED_PAYMENT_DELAY_SECONDS = 2L;
+    private static final int SIMULATED_QR_MODULES = 29;
+    private static final int SIMULATED_QR_MODULE_SIZE = 8;
     private final PaymentRepository paymentRepository;
     private final QrPaymentGateway qrPaymentGateway;
     private final KhqrPayProperties khqrPayProperties;
@@ -46,6 +51,14 @@ public class PaymentService {
         return paymentRepository.findByIdempotencyKey(idempotencyKey)
                 .map(this::reuseQrPayment)
                 .orElseGet(() -> createNewQr(request, idempotencyKey));
+    }
+
+    @Transactional
+    public QrPaymentResponse createSimulatedQr(CreateQrPaymentRequest request) {
+        String idempotencyKey = request.idempotencyKey().trim();
+        return paymentRepository.findByIdempotencyKey(idempotencyKey)
+                .map(this::reuseSimulatedQrPayment)
+                .orElseGet(() -> createNewSimulatedQr(request, idempotencyKey));
     }
 
     private QrPaymentResponse createNewQr(CreateQrPaymentRequest request, String idempotencyKey) {
@@ -75,6 +88,29 @@ public class PaymentService {
         QrPaymentInitiation initiation = qrPaymentGateway.initiate(
                 payment.getExternalReference(), payment.getAmount(), payment.getNote());
         return QrPaymentResponse.reused(PaymentResponse.from(payment), initiation);
+    }
+
+    private QrPaymentResponse createNewSimulatedQr(CreateQrPaymentRequest request, String idempotencyKey) {
+        String currency = normalizeCurrency(request.currencyCode());
+        BigDecimal amount = money(request.amount());
+        String transactionId = simulatedTransactionId(request.orderId(), idempotencyKey);
+        QrPaymentInitiation initiation = simulatedQr(transactionId, amount);
+        Payment payment = Payment.builder()
+                .orderId(request.orderId()).businessId(request.businessId()).storeId(request.storeId())
+                .amount(amount).tenderedAmount(null).changeAmount(ZERO).refundedAmount(ZERO)
+                .currencyCode(currency).method(PaymentMethod.QR).provider(PaymentProvider.SIMULATED)
+                .status(PaymentStatus.PENDING).externalReference(transactionId)
+                .idempotencyKey(idempotencyKey).note(trim(request.note())).build();
+        return QrPaymentResponse.created(PaymentResponse.from(paymentRepository.save(payment)), initiation);
+    }
+
+    private QrPaymentResponse reuseSimulatedQrPayment(Payment payment) {
+        if (payment.getMethod() != PaymentMethod.QR || payment.getProvider() != PaymentProvider.SIMULATED) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, "Idempotency key already belongs to a different payment");
+        }
+        return QrPaymentResponse.reused(
+                PaymentResponse.from(payment), simulatedQr(payment.getExternalReference(), payment.getAmount()));
     }
 
     private PaymentResponse createNew(CreatePaymentRequest request) {
@@ -107,6 +143,29 @@ public class PaymentService {
     @Transactional(readOnly = true)
     public PaymentResponse get(Long id) {
         return PaymentResponse.from(find(id));
+    }
+
+    @Transactional
+    public PaymentResponse simulateCallback(Long id) {
+        Payment payment = find(id);
+        if (payment.getProvider() != PaymentProvider.SIMULATED || payment.getMethod() != PaymentMethod.QR) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, "Only simulated QR payments can use the simulated callback");
+        }
+        if (payment.getStatus() == PaymentStatus.PAID) {
+            return PaymentResponse.from(payment);
+        }
+        if (payment.getStatus() != PaymentStatus.PENDING) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only a pending simulated payment can be completed");
+        }
+        if (payment.getCreatedAt() == null
+                || payment.getCreatedAt().plusSeconds(SIMULATED_PAYMENT_DELAY_SECONDS).isAfter(LocalDateTime.now())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Simulated payment is not ready yet");
+        }
+
+        payment.setStatus(PaymentStatus.PAID);
+        payment.setPaidAt(LocalDateTime.now());
+        return PaymentResponse.from(paymentRepository.save(payment));
     }
 
     @Transactional(readOnly = true)
@@ -248,6 +307,74 @@ public class PaymentService {
             return "XP-" + orderId + "-" + suffix;
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    private String simulatedTransactionId(Long orderId, String idempotencyKey) {
+        return "SIM-" + transactionId(orderId, idempotencyKey).substring(3);
+    }
+
+    private QrPaymentInitiation simulatedQr(String transactionId, BigDecimal amount) {
+        String payload = "SIMULATED-KHQR|" + transactionId + "|" + amount.toPlainString();
+        String expiresAt = LocalDateTime.now().plus(Duration.ofMinutes(5)).toString();
+        return new QrPaymentInitiation(
+                transactionId,
+                payload,
+                simulatedQrImage(transactionId),
+                null,
+                expiresAt);
+    }
+
+    private String simulatedQrImage(String seed) {
+        boolean[][] modules = new boolean[SIMULATED_QR_MODULES][SIMULATED_QR_MODULES];
+        addFinderPattern(modules, 0, 0);
+        addFinderPattern(modules, SIMULATED_QR_MODULES - 7, 0);
+        addFinderPattern(modules, 0, SIMULATED_QR_MODULES - 7);
+
+        byte[] digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256")
+                    .digest(seed.getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+        for (int row = 0; row < SIMULATED_QR_MODULES; row++) {
+            for (int column = 0; column < SIMULATED_QR_MODULES; column++) {
+                if (!modules[row][column]) {
+                    int bit = (row * SIMULATED_QR_MODULES + column) % (digest.length * 8);
+                    modules[row][column] = ((digest[bit / 8] >>> (bit % 8)) & 1) == 1;
+                }
+            }
+        }
+
+        int size = SIMULATED_QR_MODULES * SIMULATED_QR_MODULE_SIZE;
+        StringBuilder svg = new StringBuilder()
+                .append("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 ")
+                .append(size).append(' ').append(size).append("\">")
+                .append("<rect width=\"100%\" height=\"100%\" fill=\"white\"/>");
+        for (int row = 0; row < SIMULATED_QR_MODULES; row++) {
+            for (int column = 0; column < SIMULATED_QR_MODULES; column++) {
+                if (modules[row][column]) {
+                    svg.append("<rect x=\"").append(column * SIMULATED_QR_MODULE_SIZE)
+                            .append("\" y=\"").append(row * SIMULATED_QR_MODULE_SIZE)
+                            .append("\" width=\"").append(SIMULATED_QR_MODULE_SIZE)
+                            .append("\" height=\"").append(SIMULATED_QR_MODULE_SIZE)
+                            .append("\" fill=\"#111827\"/>");
+                }
+            }
+        }
+        svg.append("</svg>");
+        return "data:image/svg+xml;base64," + Base64.getEncoder()
+                .encodeToString(svg.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void addFinderPattern(boolean[][] modules, int left, int top) {
+        for (int row = 0; row < 7; row++) {
+            for (int column = 0; column < 7; column++) {
+                boolean border = row == 0 || row == 6 || column == 0 || column == 6;
+                boolean center = row >= 2 && row <= 4 && column >= 2 && column <= 4;
+                modules[top + row][left + column] = border || center;
+            }
         }
     }
 
