@@ -118,13 +118,18 @@ public class PaymentService {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST, "Create KHQRPay payments with POST /api/v1/payments/qr");
         }
-        if (request.method() != PaymentMethod.CASH) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only cash and KHQRPay QR are supported");
+        if (request.method() != PaymentMethod.CASH && request.method() != PaymentMethod.CARD) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only cash, card, and KHQRPay QR are supported");
         }
-        validateCashProvider(request);
+        if (request.method() == PaymentMethod.CASH) validateCashProvider(request);
+        if (request.method() == PaymentMethod.CARD && request.provider() != PaymentProvider.OTHER) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Card payment provider must be OTHER");
+        }
         String currency = normalizeCurrency(request.currencyCode());
         BigDecimal amount = money(request.amount());
-        BigDecimal tendered = request.tenderedAmount() == null ? null : money(request.tenderedAmount());
+        BigDecimal tendered = request.method() == PaymentMethod.CARD
+                ? amount
+                : request.tenderedAmount() == null ? null : money(request.tenderedAmount());
         if (tendered == null || tendered.compareTo(amount) < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Cash tenderedAmount must be greater than or equal to amount");
