@@ -15,6 +15,28 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     List<Payment> findByOrderIdOrderByCreatedAtAsc(Long orderId);
 
     @Query("""
+            select coalesce(sum(p.amount), 0) as grossAmount,
+                   coalesce(sum(p.refundedAmount), 0) as refundedAmount,
+                   count(p.id) as paymentCount
+            from Payment p
+            where p.storeId = :storeId
+              and p.cashierId = :cashierId
+              and p.currencyCode = :currencyCode
+              and p.method = com.x.payment.entity.PaymentMethod.CASH
+              and p.createdAt >= :from
+              and p.createdAt < :to
+              and p.status in (com.x.payment.entity.PaymentStatus.PAID,
+                               com.x.payment.entity.PaymentStatus.PARTIALLY_REFUNDED,
+                               com.x.payment.entity.PaymentStatus.REFUNDED)
+            """)
+    CashPaymentTotalsProjection cashPaymentTotals(
+            @Param("storeId") Long storeId,
+            @Param("cashierId") Long cashierId,
+            @Param("currencyCode") String currencyCode,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to);
+
+    @Query("""
             select p.method as method, p.provider as provider, count(p.id) as paymentCount,
                    coalesce(sum(p.amount), 0) as totalAmount,
                    coalesce(sum(p.refundedAmount), 0) as refundedAmount

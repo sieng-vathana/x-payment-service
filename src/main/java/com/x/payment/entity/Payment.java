@@ -11,7 +11,8 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "payments", indexes = {
         @Index(name = "idx_payment_order", columnList = "order_id"),
-        @Index(name = "idx_payment_store_created", columnList = "store_id,created_at")
+        @Index(name = "idx_payment_store_created", columnList = "store_id,created_at"),
+        @Index(name = "idx_payment_cashier_store_created", columnList = "store_id,cashier_id,currency_code,created_at")
 })
 @Getter
 @Setter
@@ -29,6 +30,8 @@ public class Payment {
     private Long businessId;
     @Column(name = "store_id", nullable = false)
     private Long storeId;
+    @Column(name = "cashier_id")
+    private Long cashierId;
 
     @Column(nullable = false, precision = 14, scale = 2)
     private BigDecimal amount;

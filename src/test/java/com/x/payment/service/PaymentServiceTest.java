@@ -51,7 +51,7 @@ class PaymentServiceTest {
     void recordsCashAsPaidAndCalculatesChange() {
         CreatePaymentRequest request = new CreatePaymentRequest(
                 16L, 2L, 3L, new BigDecimal("12.50"), new BigDecimal("20.00"), "USD",
-                PaymentMethod.CASH, PaymentProvider.NONE, null, "checkout-16", null);
+                PaymentMethod.CASH, PaymentProvider.NONE, null, "checkout-16", null, 7L);
         when(paymentRepository.findByIdempotencyKey("checkout-16")).thenReturn(Optional.empty());
         when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -64,7 +64,7 @@ class PaymentServiceTest {
     @Test
     void createsPendingKhqrPayPaymentAndReturnsQrData() {
         CreateQrPaymentRequest request = new CreateQrPaymentRequest(
-                15L, 2L, 3L, new BigDecimal("12.50"), "usd", "checkout-15", "Counter 1");
+                15L, 2L, 3L, new BigDecimal("12.50"), "usd", "checkout-15", "Counter 1", 7L);
         when(paymentRepository.findByIdempotencyKey("checkout-15")).thenReturn(Optional.empty());
         when(qrPaymentGateway.initiate(anyString(), eq(new BigDecimal("12.50")), eq("Counter 1")))
                 .thenAnswer(invocation -> new QrPaymentInitiation(
@@ -92,7 +92,7 @@ class PaymentServiceTest {
     @Test
     void createsPendingSimulatedPaymentWithoutCallingProvider() {
         CreateQrPaymentRequest request = new CreateQrPaymentRequest(
-                15L, 2L, 3L, new BigDecimal("12.50"), "USD", "simulated-checkout", "Demo payment");
+                15L, 2L, 3L, new BigDecimal("12.50"), "USD", "simulated-checkout", "Demo payment", 7L);
         when(paymentRepository.findByIdempotencyKey("simulated-checkout")).thenReturn(Optional.empty());
         when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> {
             Payment payment = invocation.getArgument(0);
@@ -146,7 +146,7 @@ class PaymentServiceTest {
     @Test
     void doesNotSavePendingPaymentWhenKhqrPayRejectsCheckout() {
         CreateQrPaymentRequest request = new CreateQrPaymentRequest(
-                15L, 2L, 3L, new BigDecimal("12.50"), "USD", "checkout-rejected", null);
+                15L, 2L, 3L, new BigDecimal("12.50"), "USD", "checkout-rejected", null, 7L);
         when(paymentRepository.findByIdempotencyKey("checkout-rejected")).thenReturn(Optional.empty());
         when(qrPaymentGateway.initiate(anyString(), eq(new BigDecimal("12.50")), eq(null)))
                 .thenThrow(new ResponseStatusException(
@@ -231,7 +231,7 @@ class PaymentServiceTest {
                         "XP-15-reference", null, null, "https://khqr.cc/checkout", null));
 
         QrPaymentResponse response = paymentService.createQr(new CreateQrPaymentRequest(
-                15L, 2L, 3L, new BigDecimal("12.50"), "USD", "checkout-15", "Counter 1"));
+                15L, 2L, 3L, new BigDecimal("12.50"), "USD", "checkout-15", "Counter 1", 7L));
 
         assertThat(response.reused()).isTrue();
         assertThat(response.checkoutUrl()).isEqualTo("https://khqr.cc/checkout");

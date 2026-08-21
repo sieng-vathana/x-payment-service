@@ -17,5 +17,6 @@ public record CreatePaymentRequest(
         @NotNull PaymentProvider provider,
         @Size(max = 160) String externalReference,
         @NotBlank @Size(max = 100) String idempotencyKey,
-        @Size(max = 500) String note) {
+        @Size(max = 500) String note,
+        @Positive Long cashierId) {
 }

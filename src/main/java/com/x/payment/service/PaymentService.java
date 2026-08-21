@@ -72,7 +72,7 @@ public class PaymentService {
         QrPaymentInitiation initiation = qrPaymentGateway.initiate(
                 transactionId, amount, trim(request.note()));
         Payment payment = Payment.builder()
-                .orderId(request.orderId()).businessId(request.businessId()).storeId(request.storeId())
+                .orderId(request.orderId()).businessId(request.businessId()).storeId(request.storeId()).cashierId(request.cashierId())
                 .amount(amount).tenderedAmount(null).changeAmount(ZERO).refundedAmount(ZERO)
                 .currencyCode(currency).method(PaymentMethod.QR).provider(PaymentProvider.KHQRPAY)
                 .status(PaymentStatus.PENDING).externalReference(initiation.transactionId())
@@ -96,7 +96,7 @@ public class PaymentService {
         String transactionId = simulatedTransactionId(request.orderId(), idempotencyKey);
         QrPaymentInitiation initiation = simulatedQr(transactionId, amount);
         Payment payment = Payment.builder()
-                .orderId(request.orderId()).businessId(request.businessId()).storeId(request.storeId())
+                .orderId(request.orderId()).businessId(request.businessId()).storeId(request.storeId()).cashierId(request.cashierId())
                 .amount(amount).tenderedAmount(null).changeAmount(ZERO).refundedAmount(ZERO)
                 .currencyCode(currency).method(PaymentMethod.QR).provider(PaymentProvider.SIMULATED)
                 .status(PaymentStatus.PENDING).externalReference(transactionId)
@@ -135,7 +135,7 @@ public class PaymentService {
                     "Cash tenderedAmount must be greater than or equal to amount");
         }
         Payment payment = Payment.builder()
-                .orderId(request.orderId()).businessId(request.businessId()).storeId(request.storeId())
+                .orderId(request.orderId()).businessId(request.businessId()).storeId(request.storeId()).cashierId(request.cashierId())
                 .amount(amount).tenderedAmount(tendered)
                 .changeAmount(tendered.subtract(amount))
                 .refundedAmount(ZERO).currencyCode(currency).method(request.method()).provider(request.provider())

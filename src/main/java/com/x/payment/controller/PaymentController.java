@@ -21,6 +21,7 @@ import java.util.List;
 @Validated
 public class PaymentController {
     private final PaymentService paymentService;
+    private final com.x.payment.service.CashSessionService cashSessionService;
 
     @PostMapping
     public ResponseEntity<ApiResponse<PaymentResponse>> create(@Valid @RequestBody CreatePaymentRequest request) {
@@ -87,5 +88,51 @@ public class PaymentController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to) {
         return ResponseEntity.ok(ApiResponse.success(200, paymentService.breakdown(storeId, from, to)));
+    }
+
+    @GetMapping("/cash-sessions/current")
+    public ResponseEntity<ApiResponse<CashSessionResponse>> currentCashSession(
+            @RequestParam @Positive Long storeId,
+            @RequestParam @Positive Long cashierId,
+            @RequestParam String currencyCode) {
+        return ResponseEntity.ok(ApiResponse.success(200,
+                cashSessionService.current(storeId, cashierId, currencyCode)));
+    }
+
+    @GetMapping("/cash-sessions/history")
+    public ResponseEntity<ApiResponse<List<CashSessionResponse>>> cashSessionHistory(
+            @RequestParam @Positive Long storeId,
+            @RequestParam @Positive Long cashierId,
+            @RequestParam String currencyCode) {
+        return ResponseEntity.ok(ApiResponse.success(200,
+                cashSessionService.history(storeId, cashierId, currencyCode)));
+    }
+
+    @PostMapping("/cash-sessions/open")
+    public ResponseEntity<ApiResponse<CashSessionResponse>> openCashSession(
+            @Valid @RequestBody OpenCashSessionRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success(201, "Cash register opened", cashSessionService.open(request)));
+    }
+
+    @GetMapping("/cash-sessions/{id}")
+    public ResponseEntity<ApiResponse<CashSessionResponse>> getCashSession(@PathVariable @Positive Long id) {
+        return ResponseEntity.ok(ApiResponse.success(200, cashSessionService.currentById(id)));
+    }
+
+    @PostMapping("/cash-sessions/{id}/movements")
+    public ResponseEntity<ApiResponse<CashSessionResponse>> addCashMovement(
+            @PathVariable @Positive Long id,
+            @Valid @RequestBody CashMovementRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(200, "Cash movement recorded",
+                cashSessionService.addMovement(id, request)));
+    }
+
+    @PostMapping("/cash-sessions/{id}/close")
+    public ResponseEntity<ApiResponse<CashSessionResponse>> closeCashSession(
+            @PathVariable @Positive Long id,
+            @Valid @RequestBody CloseCashSessionRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(200, "Cash register closed",
+                cashSessionService.close(id, request)));
     }
 }
