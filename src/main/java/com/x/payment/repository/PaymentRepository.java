@@ -42,6 +42,7 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
                    coalesce(sum(p.refundedAmount), 0) as refundedAmount
             from Payment p
             where p.storeId = :storeId
+              and p.currencyCode = :currencyCode
               and p.createdAt >= :from
               and p.createdAt < :to
               and p.status in (com.x.payment.entity.PaymentStatus.PAID,
@@ -52,6 +53,7 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
             """)
     List<PaymentBreakdownProjection> paymentBreakdown(
             @Param("storeId") Long storeId,
+            @Param("currencyCode") String currencyCode,
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to);
 }

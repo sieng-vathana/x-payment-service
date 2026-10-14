@@ -85,9 +85,10 @@ public class PaymentController {
     @GetMapping("/reports/breakdown")
     public ResponseEntity<ApiResponse<List<PaymentBreakdownResponse>>> breakdown(
             @RequestParam @Positive Long storeId,
+            @RequestParam String currencyCode,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to) {
-        return ResponseEntity.ok(ApiResponse.success(200, paymentService.breakdown(storeId, from, to)));
+        return ResponseEntity.ok(ApiResponse.success(200, paymentService.breakdown(storeId, currencyCode, from, to)));
     }
 
     @GetMapping("/cash-sessions/current")

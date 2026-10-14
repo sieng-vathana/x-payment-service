@@ -261,11 +261,11 @@ public class PaymentService {
     }
 
     @Transactional(readOnly = true)
-    public List<PaymentBreakdownResponse> breakdown(Long storeId, LocalDateTime from, LocalDateTime to) {
+    public List<PaymentBreakdownResponse> breakdown(Long storeId, String currencyCode, LocalDateTime from, LocalDateTime to) {
         if (!from.isBefore(to)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "from must be before to");
         }
-        return paymentRepository.paymentBreakdown(storeId, from, to).stream()
+        return paymentRepository.paymentBreakdown(storeId, normalizeCurrency(currencyCode), from, to).stream()
                 .map(row -> new PaymentBreakdownResponse(
                         row.getMethod(), row.getProvider(), row.getPaymentCount(),
                         row.getTotalAmount(), row.getRefundedAmount()))
