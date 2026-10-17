@@ -3,11 +3,15 @@ package com.x.payment.service;
 import com.x.payment.dto.*;
 import com.x.payment.config.KhqrPayProperties;
 import com.x.payment.entity.*;
+import com.x.payment.gateway.BakongKhqrGenerator;
+import com.x.payment.gateway.BakongTransactionClient;
 import com.x.payment.gateway.QrPaymentGateway;
 import com.x.payment.gateway.QrPaymentInitiation;
 import com.x.payment.gateway.KhqrPaySigner;
 import com.x.payment.repository.PaymentRepository;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +29,7 @@ import java.util.Base64;
 import java.util.Currency;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -36,6 +41,9 @@ public class PaymentService {
     private final PaymentRepository paymentRepository;
     private final QrPaymentGateway qrPaymentGateway;
     private final KhqrPayProperties khqrPayProperties;
+    private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
+    private final BakongKhqrGenerator bakongKhqrGenerator;
+    private final BakongTransactionClient bakongTransactionClient;
     private final KhqrPaySigner khqrPaySigner = new KhqrPaySigner();
 
     @Transactional
@@ -59,6 +67,79 @@ public class PaymentService {
         return paymentRepository.findByIdempotencyKey(idempotencyKey)
                 .map(this::reuseSimulatedQrPayment)
                 .orElseGet(() -> createNewSimulatedQr(request, idempotencyKey));
+    }
+
+    /**
+     * Creates a KHQR that pays into the merchant's own Bakong account. Nothing reports the payment
+     * back, so it stays PENDING until the cashier confirms it with POST /{id}/confirm.
+     */
+    @Transactional
+    public QrPaymentResponse createBakongQr(CreateBakongQrPaymentRequest request) {
+        String idempotencyKey = request.idempotencyKey().trim();
+        Payment existing = paymentRepository.findByIdempotencyKey(idempotencyKey).orElse(null);
+        if (existing != null) {
+            if (existing.getMethod() != PaymentMethod.QR || existing.getProvider() != PaymentProvider.BAKONG) {
+                throw new ResponseStatusException(
+                        HttpStatus.CONFLICT, "Idempotency key already belongs to a different payment");
+            }
+            BakongKhqrGenerator.BakongKhqr khqr = bakongKhqrGenerator.generate(
+                    request.bakongAccountId(), request.merchantName(), request.billNumber(),
+                    existing.getAmount(), existing.getCurrencyCode());
+            if (existing.getStatus() == PaymentStatus.PENDING) {
+                existing.setExternalReference(khqr.md5());
+                existing = paymentRepository.save(existing);
+            }
+            return QrPaymentResponse.reused(PaymentResponse.from(existing), bakongInitiation(khqr));
+        }
+
+        String currency = normalizeCurrency(request.currencyCode());
+        BigDecimal amount = money(request.amount());
+        BakongKhqrGenerator.BakongKhqr khqr = bakongKhqrGenerator.generate(
+                request.bakongAccountId(), request.merchantName(), request.billNumber(), amount, currency);
+        Payment payment = Payment.builder()
+                .orderId(request.orderId()).businessId(request.businessId()).storeId(request.storeId()).cashierId(request.cashierId())
+                .amount(amount).tenderedAmount(null).changeAmount(ZERO).refundedAmount(ZERO)
+                .currencyCode(currency).method(PaymentMethod.QR).provider(PaymentProvider.BAKONG)
+                .status(PaymentStatus.PENDING).externalReference(khqr.md5())
+                .idempotencyKey(idempotencyKey).note(trim(request.note())).build();
+        return QrPaymentResponse.created(PaymentResponse.from(paymentRepository.save(payment)), bakongInitiation(khqr));
+    }
+
+    /**
+     * Asks Bakong whether this KHQR has been paid and marks the payment PAID when the amount and
+     * currency match. The POS calls this every few seconds while the QR is on screen.
+     */
+    @Transactional
+    public PaymentResponse checkBakong(Long id) {
+        Payment payment = find(id);
+        if (payment.getProvider() != PaymentProvider.BAKONG || payment.getMethod() != PaymentMethod.QR) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only Bakong KHQR payments can be checked with Bakong");
+        }
+        if (payment.getStatus() != PaymentStatus.PENDING) {
+            return PaymentResponse.from(payment);
+        }
+        Optional<BakongTransactionClient.BakongTransaction> transaction;
+        try {
+            transaction = bakongTransactionClient.findByMd5(payment.getExternalReference());
+        } catch (BakongTransactionClient.BakongApiException exception) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage());
+        }
+        if (transaction.isEmpty()) {
+            return PaymentResponse.from(payment);
+        }
+        if (!transaction.get().settles(payment.getAmount(), payment.getCurrencyCode())) {
+            log.warn("Bakong transaction for payment {} does not match: expected {} {}, got {} {}",
+                    payment.getId(), payment.getAmount(), payment.getCurrencyCode(),
+                    transaction.get().amount(), transaction.get().currency());
+            return PaymentResponse.from(payment);
+        }
+        payment.setStatus(PaymentStatus.PAID);
+        payment.setPaidAt(LocalDateTime.now());
+        return PaymentResponse.from(paymentRepository.save(payment));
+    }
+
+    private QrPaymentInitiation bakongInitiation(BakongKhqrGenerator.BakongKhqr khqr) {
+        return new QrPaymentInitiation(khqr.md5(), khqr.payload(), khqr.imageDataUrl(), null, khqr.expiresAt());
     }
 
     private QrPaymentResponse createNewQr(CreateQrPaymentRequest request, String idempotencyKey) {

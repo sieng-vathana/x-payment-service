@@ -47,6 +47,22 @@ public class PaymentController {
                 .body(ApiResponse.success(201, "Simulated QR payment created", paymentService.createSimulatedQr(request)));
     }
 
+    @PostMapping("/bakong-qr")
+    public ResponseEntity<ApiResponse<QrPaymentResponse>> createBakongQr(
+            @Valid @RequestBody CreateBakongQrPaymentRequest request) {
+        QrPaymentResponse response = paymentService.createBakongQr(request);
+        if (response.reused()) {
+            return ResponseEntity.ok(ApiResponse.success(200, "Bakong KHQR payment already exists", response));
+        }
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success(201, "Bakong KHQR payment created", response));
+    }
+
+    @PostMapping("/{id}/bakong-check")
+    public ResponseEntity<ApiResponse<PaymentResponse>> checkBakong(@PathVariable @Positive Long id) {
+        return ResponseEntity.ok(ApiResponse.success(200, paymentService.checkBakong(id)));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<ApiResponse<PaymentResponse>> get(@PathVariable @Positive Long id) {
         return ResponseEntity.ok(ApiResponse.success(200, paymentService.get(id)));
