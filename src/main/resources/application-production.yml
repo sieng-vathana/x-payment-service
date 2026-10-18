@@ -13,3 +13,7 @@ spring:
     hibernate:
       ddl-auto: update
     show-sql: false
+
+services:
+  business:
+    base-url: ${BUSINESS_SERVICE_URL:http://x-business-service:8080}

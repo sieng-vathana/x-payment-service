@@ -6,11 +6,13 @@ import com.x.payment.dto.CreateQrPaymentRequest;
 import com.x.payment.dto.KhqrPayWebhookRequest;
 import com.x.payment.dto.PaymentResponse;
 import com.x.payment.dto.QrPaymentResponse;
+import com.x.payment.alert.QrPaymentReceived;
 import com.x.payment.config.KhqrPayProperties;
 import com.x.payment.entity.Payment;
 import com.x.payment.entity.PaymentMethod;
 import com.x.payment.entity.PaymentProvider;
 import com.x.payment.entity.PaymentStatus;
+import com.x.payment.gateway.BakongTransactionClient;
 import com.x.payment.gateway.QrPaymentGateway;
 import com.x.payment.gateway.QrPaymentInitiation;
 import com.x.payment.repository.PaymentRepository;
@@ -20,6 +22,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -44,6 +47,10 @@ class PaymentServiceTest {
     private QrPaymentGateway qrPaymentGateway;
     @Mock
     private KhqrPayProperties khqrPayProperties;
+    @Mock
+    private ApplicationEventPublisher events;
+    @Mock
+    private BakongTransactionClient bakongTransactionClient;
     @InjectMocks
     private PaymentService paymentService;
 
@@ -125,6 +132,25 @@ class PaymentServiceTest {
         assertThat(response.status()).isEqualTo(PaymentStatus.PAID);
         assertThat(response.paidAt()).isNotNull();
         verify(paymentRepository).save(payment);
+        verify(events, never()).publishEvent(any(QrPaymentReceived.class));
+    }
+
+    @Test
+    void bakongPaymentFoundByTheCheckIsAnnouncedOnce() {
+        Payment payment = Payment.builder()
+                .id(7L).businessId(2L).amount(new BigDecimal("10.00")).currencyCode("USD")
+                .method(PaymentMethod.QR).provider(PaymentProvider.BAKONG).status(PaymentStatus.PENDING)
+                .externalReference("md5-of-khqr").note("Iced latte x2")
+                .build();
+        when(paymentRepository.findById(7L)).thenReturn(Optional.of(payment));
+        when(bakongTransactionClient.findByMd5("md5-of-khqr")).thenReturn(Optional.of(new BakongTransactionClient.BakongTransaction(
+                "hash", new BigDecimal("10.00"), "USD", "customer@aba", "shop@bkrt")));
+        when(paymentRepository.save(payment)).thenReturn(payment);
+
+        assertThat(paymentService.checkBakong(7L).status()).isEqualTo(PaymentStatus.PAID);
+        assertThat(paymentService.checkBakong(7L).status()).isEqualTo(PaymentStatus.PAID);
+
+        verify(events).publishEvent(new QrPaymentReceived(7L, 2L, new BigDecimal("10.00"), "USD", "Iced latte x2", false));
     }
 
     @Test
@@ -194,6 +220,7 @@ class PaymentServiceTest {
         assertThat(response.status()).isEqualTo(PaymentStatus.PAID);
         assertThat(response.paidAt()).isNotNull();
         verify(paymentRepository).save(payment);
+        verify(events).publishEvent(any(QrPaymentReceived.class));
     }
 
     @Test

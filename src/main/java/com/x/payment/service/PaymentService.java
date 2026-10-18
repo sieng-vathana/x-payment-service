@@ -1,5 +1,6 @@
 package com.x.payment.service;
 
+import com.x.payment.alert.QrPaymentReceived;
 import com.x.payment.dto.*;
 import com.x.payment.config.KhqrPayProperties;
 import com.x.payment.entity.*;
@@ -13,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -44,6 +46,7 @@ public class PaymentService {
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
     private final BakongKhqrGenerator bakongKhqrGenerator;
     private final BakongTransactionClient bakongTransactionClient;
+    private final ApplicationEventPublisher events;
     private final KhqrPaySigner khqrPaySigner = new KhqrPaySigner();
 
     @Transactional
@@ -135,7 +138,9 @@ public class PaymentService {
         }
         payment.setStatus(PaymentStatus.PAID);
         payment.setPaidAt(LocalDateTime.now());
-        return PaymentResponse.from(paymentRepository.save(payment));
+        Payment paid = paymentRepository.save(payment);
+        events.publishEvent(QrPaymentReceived.from(paid, false));
+        return PaymentResponse.from(paid);
     }
 
     private QrPaymentInitiation bakongInitiation(BakongKhqrGenerator.BakongKhqr khqr) {
@@ -273,7 +278,11 @@ public class PaymentService {
         payment.setExternalReference(request.externalReference().trim());
         payment.setStatus(PaymentStatus.PAID);
         payment.setPaidAt(LocalDateTime.now());
-        return PaymentResponse.from(paymentRepository.save(payment));
+        Payment paid = paymentRepository.save(payment);
+        if (paid.getMethod() == PaymentMethod.QR && paid.getProvider() == PaymentProvider.BAKONG) {
+            events.publishEvent(QrPaymentReceived.from(paid, true));
+        }
+        return PaymentResponse.from(paid);
     }
 
     @Transactional
@@ -316,7 +325,9 @@ public class PaymentService {
 
         payment.setStatus(PaymentStatus.PAID);
         payment.setPaidAt(LocalDateTime.now());
-        return PaymentResponse.from(paymentRepository.save(payment));
+        Payment paid = paymentRepository.save(payment);
+        events.publishEvent(QrPaymentReceived.from(paid, false));
+        return PaymentResponse.from(paid);
     }
 
     @Transactional

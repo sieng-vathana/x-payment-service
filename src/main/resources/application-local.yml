@@ -13,3 +13,7 @@ spring:
     hibernate:
       ddl-auto: update
     show-sql: false
+
+services:
+  business:
+    base-url: http://127.0.0.1:8086
