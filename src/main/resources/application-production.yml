@@ -17,3 +17,7 @@ spring:
 services:
   business:
     base-url: ${BUSINESS_SERVICE_URL:http://x-business-service:8080}
+  order:
+    base-url: ${ORDER_SERVICE_URL:http://x-order-service:8080}
+  customer:
+    base-url: ${CUSTOMER_SERVICE_URL:http://x-customer-service:8080}
