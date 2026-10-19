@@ -139,7 +139,9 @@ public class PaymentService {
         payment.setStatus(PaymentStatus.PAID);
         payment.setPaidAt(LocalDateTime.now());
         Payment paid = paymentRepository.save(payment);
-        events.publishEvent(QrPaymentReceived.from(paid, false));
+        BakongTransactionClient.BakongTransaction settled = transaction.get();
+        events.publishEvent(QrPaymentReceived.from(paid, false, settled.fromAccountId(),
+                settled.hash() != null ? settled.hash() : paid.getExternalReference()));
         return PaymentResponse.from(paid);
     }
 

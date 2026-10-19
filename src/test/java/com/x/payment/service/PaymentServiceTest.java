@@ -150,7 +150,8 @@ class PaymentServiceTest {
         assertThat(paymentService.checkBakong(7L).status()).isEqualTo(PaymentStatus.PAID);
         assertThat(paymentService.checkBakong(7L).status()).isEqualTo(PaymentStatus.PAID);
 
-        verify(events).publishEvent(new QrPaymentReceived(7L, 2L, null, new BigDecimal("10.00"), "USD", "Iced latte x2", false));
+        verify(events).publishEvent(new QrPaymentReceived(7L, 2L, null, null, null, new BigDecimal("10.00"), "USD", "Iced latte x2", false,
+                "customer@aba", "hash", payment.getPaidAt()));
     }
 
     @Test

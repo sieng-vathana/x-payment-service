@@ -15,6 +15,10 @@ spring:
     show-sql: false
 
 services:
+  store:
+    base-url: http://127.0.0.1:8087
+  user:
+    base-url: http://127.0.0.1:7445
   business:
     base-url: http://127.0.0.1:8086
   order:

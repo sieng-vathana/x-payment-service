@@ -38,9 +38,17 @@ public class BusinessAlertClient {
 
     /** The alert goes to the business's chats that cover the store; without a store, to all of them. */
     public void send(Long businessId, Long storeId, String type, String text) {
+        send(businessId, storeId, type, text, null);
+    }
+
+    /** parseMode "HTML" asks Telegram to show the text formatted. */
+    public void send(Long businessId, Long storeId, String type, String text, String parseMode) {
         Map<String, Object> body = new HashMap<>(Map.of("type", type, "text", text));
         if (storeId != null) {
             body.put("storeId", storeId);
+        }
+        if (parseMode != null) {
+            body.put("parseMode", parseMode);
         }
         try {
             client.post()
