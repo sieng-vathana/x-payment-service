@@ -23,7 +23,7 @@ public class TelegramPaymentAlerts {
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onQrPaymentReceived(QrPaymentReceived payment) {
-        businessAlertClient.send(payment.businessId(), "KHQR_PAYMENT", text(payment));
+        businessAlertClient.send(payment.businessId(), payment.storeId(), "KHQR_PAYMENT", text(payment));
     }
 
     static String text(QrPaymentReceived payment) {

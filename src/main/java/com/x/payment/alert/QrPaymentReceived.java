@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 public record QrPaymentReceived(
         Long paymentId,
         Long businessId,
+        Long storeId,
         BigDecimal amount,
         String currencyCode,
         String note,
@@ -15,7 +16,7 @@ public record QrPaymentReceived(
 
     public static QrPaymentReceived from(Payment payment, boolean confirmedByCashier) {
         return new QrPaymentReceived(
-                payment.getId(), payment.getBusinessId(), payment.getAmount(),
+                payment.getId(), payment.getBusinessId(), payment.getStoreId(), payment.getAmount(),
                 payment.getCurrencyCode(), payment.getNote(), confirmedByCashier);
     }
 }
