@@ -366,6 +366,40 @@ public class PaymentService {
                 .toList();
     }
 
+    /** Payments and refunds per HOUR, DAY or MONTH; timeZone (e.g. Asia/Phnom_Penh) labels the periods, UTC when absent. */
+    @Transactional(readOnly = true)
+    public List<PaymentPeriodResponse> periods(Long storeId, String currencyCode, LocalDateTime from, LocalDateTime to,
+                                               String bucket, String timeZone) {
+        if (!from.isBefore(to)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "from must be before to");
+        }
+        if (java.time.Duration.between(from, to).toDays() > 400) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A payment breakdown can cover at most 400 days");
+        }
+        String pattern = switch (bucket == null ? "DAY" : bucket.trim().toUpperCase()) {
+            case "HOUR" -> "%Y-%m-%d %H:00";
+            case "DAY" -> "%Y-%m-%d";
+            case "MONTH" -> "%Y-%m";
+            default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "bucket must be HOUR, DAY or MONTH");
+        };
+        return paymentRepository.paymentPeriods(storeId, normalizeCurrency(currencyCode), from, to,
+                        offsetMinutes(timeZone, from), pattern).stream()
+                .map(row -> new PaymentPeriodResponse(row.getPeriod(), row.getPaymentCount(),
+                        row.getTotalAmount(), row.getRefundedAmount()))
+                .toList();
+    }
+
+    /** Minutes to add to a stored UTC time to get the time in the zone, taken at the start of the range. */
+    static int offsetMinutes(String timeZone, LocalDateTime utcFrom) {
+        if (timeZone == null || timeZone.isBlank()) return 0;
+        try {
+            return java.time.ZoneId.of(timeZone.trim()).getRules()
+                    .getOffset(utcFrom.toInstant(java.time.ZoneOffset.UTC)).getTotalSeconds() / 60;
+        } catch (java.time.DateTimeException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown time zone " + timeZone);
+        }
+    }
+
     private Payment find(Long id) {
         return paymentRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment not found"));

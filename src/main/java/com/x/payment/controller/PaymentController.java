@@ -107,6 +107,18 @@ public class PaymentController {
         return ResponseEntity.ok(ApiResponse.success(200, paymentService.breakdown(storeId, currencyCode, from, to)));
     }
 
+    /** from and to are UTC; the periods are labelled in timeZone. */
+    @GetMapping("/reports/periods")
+    public ResponseEntity<ApiResponse<List<PaymentPeriodResponse>>> periods(
+            @RequestParam @Positive Long storeId,
+            @RequestParam String currencyCode,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
+            @RequestParam(defaultValue = "DAY") String bucket,
+            @RequestParam(required = false) String timeZone) {
+        return ResponseEntity.ok(ApiResponse.success(200, paymentService.periods(storeId, currencyCode, from, to, bucket, timeZone)));
+    }
+
     @GetMapping("/cash-sessions/current")
     public ResponseEntity<ApiResponse<CashSessionResponse>> currentCashSession(
             @RequestParam @Positive Long storeId,

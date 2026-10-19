@@ -56,4 +56,30 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
             @Param("currencyCode") String currencyCode,
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to);
+
+    /**
+     * Payments per hour (pattern %Y-%m-%d %H:00), day (%Y-%m-%d) or month (%Y-%m) of the viewer's zone, which is
+     * offsetMinutes ahead of the stored UTC times. Refunds count in the period of the payment they reverse.
+     */
+    @Query(value = """
+            select date_format(date_add(p.created_at, interval :offsetMinutes minute), :pattern) as period,
+                   count(p.id) as paymentCount,
+                   coalesce(sum(p.amount), 0) as totalAmount,
+                   coalesce(sum(p.refunded_amount), 0) as refundedAmount
+              from payments p
+             where p.store_id = :storeId
+               and p.currency_code = :currencyCode
+               and p.created_at >= :from
+               and p.created_at < :to
+               and p.status in ('PAID', 'PARTIALLY_REFUNDED', 'REFUNDED')
+             group by period
+             order by period
+            """, nativeQuery = true)
+    List<PaymentPeriodProjection> paymentPeriods(
+            @Param("storeId") Long storeId,
+            @Param("currencyCode") String currencyCode,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to,
+            @Param("offsetMinutes") int offsetMinutes,
+            @Param("pattern") String pattern);
 }
