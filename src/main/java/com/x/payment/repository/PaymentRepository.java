@@ -26,8 +26,8 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
               and p.cashierId = :cashierId
               and p.currencyCode = :currencyCode
               and p.method = com.x.payment.entity.PaymentMethod.CASH
-              and p.createdAt >= :from
-              and p.createdAt < :to
+              and coalesce(p.paidAt, p.createdAt) >= :from
+              and coalesce(p.paidAt, p.createdAt) < :to
               and p.status in (com.x.payment.entity.PaymentStatus.PAID,
                                com.x.payment.entity.PaymentStatus.PARTIALLY_REFUNDED,
                                com.x.payment.entity.PaymentStatus.REFUNDED)

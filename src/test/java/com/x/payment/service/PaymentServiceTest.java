@@ -15,6 +15,8 @@ import com.x.payment.entity.PaymentStatus;
 import com.x.payment.gateway.BakongTransactionClient;
 import com.x.payment.gateway.QrPaymentGateway;
 import com.x.payment.gateway.QrPaymentInitiation;
+import com.x.payment.entity.CashSessionStatus;
+import com.x.payment.repository.CashSessionRepository;
 import com.x.payment.repository.PaymentRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -51,6 +53,8 @@ class PaymentServiceTest {
     private ApplicationEventPublisher events;
     @Mock
     private BakongTransactionClient bakongTransactionClient;
+    @Mock
+    private CashSessionRepository cashSessionRepository;
     @InjectMocks
     private PaymentService paymentService;
 
@@ -66,6 +70,37 @@ class PaymentServiceTest {
 
         assertThat(response.status()).isEqualTo(PaymentStatus.PAID);
         assertThat(response.changeAmount()).isEqualByComparingTo("7.50");
+    }
+
+    @Test
+    void anOfflineCashSaleKeepsItsTimeWhenItsRegisterWasOpen() {
+        LocalDateTime soldAt = LocalDateTime.now().minusHours(3);
+        CreatePaymentRequest request = new CreatePaymentRequest(
+                17L, 2L, 3L, new BigDecimal("12.50"), new BigDecimal("20.00"), "USD",
+                PaymentMethod.CASH, PaymentProvider.NONE, null, "PAY-OFF-1", null, 7L, soldAt);
+        when(paymentRepository.findByIdempotencyKey("PAY-OFF-1")).thenReturn(Optional.empty());
+        when(cashSessionRepository.existsByStoreIdAndCashierIdAndCurrencyCodeAndStatusAndOpenedAtLessThanEqual(
+                3L, 7L, "USD", CashSessionStatus.OPEN, soldAt)).thenReturn(true);
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        PaymentResponse response = paymentService.create(request);
+
+        assertThat(response.paidAt()).isEqualTo(soldAt);
+    }
+
+    @Test
+    void anOfflineCashSaleIsRefusedWhenItsRegisterIsNoLongerOpen() {
+        LocalDateTime soldAt = LocalDateTime.now().minusHours(3);
+        CreatePaymentRequest request = new CreatePaymentRequest(
+                18L, 2L, 3L, new BigDecimal("12.50"), new BigDecimal("20.00"), "USD",
+                PaymentMethod.CASH, PaymentProvider.NONE, null, "PAY-OFF-2", null, 7L, soldAt);
+        when(paymentRepository.findByIdempotencyKey("PAY-OFF-2")).thenReturn(Optional.empty());
+        when(cashSessionRepository.existsByStoreIdAndCashierIdAndCurrencyCodeAndStatusAndOpenedAtLessThanEqual(
+                3L, 7L, "USD", CashSessionStatus.OPEN, soldAt)).thenReturn(false);
+
+        assertThatThrownBy(() -> paymentService.create(request))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> assertThat(((ResponseStatusException) error).getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
     }
 
     @Test

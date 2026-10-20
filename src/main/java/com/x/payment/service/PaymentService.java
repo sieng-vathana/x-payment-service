@@ -42,6 +42,7 @@ public class PaymentService {
     private static final int SIMULATED_QR_MODULES = 29;
     private static final int SIMULATED_QR_MODULE_SIZE = 8;
     private final PaymentRepository paymentRepository;
+    private final com.x.payment.repository.CashSessionRepository cashSessionRepository;
     private final QrPaymentGateway qrPaymentGateway;
     private final KhqrPayProperties khqrPayProperties;
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
@@ -231,8 +232,33 @@ public class PaymentService {
                 .refundedAmount(ZERO).currencyCode(currency).method(request.method()).provider(request.provider())
                 .status(PaymentStatus.PAID)
                 .externalReference(trim(request.externalReference())).idempotencyKey(request.idempotencyKey().trim())
-                .note(trim(request.note())).paidAt(LocalDateTime.now()).build();
+                .note(trim(request.note())).paidAt(request.method() == PaymentMethod.CASH ? cashPaidAt(request, currency) : LocalDateTime.now()).build();
         return PaymentResponse.from(paymentRepository.save(payment));
+    }
+
+    /**
+     * When a cash sale happened. A sale taken offline keeps its time at the till, and is counted in the cash register
+     * that was open then, so it only goes in while that register is still open; a closed register is never changed.
+     */
+    private LocalDateTime cashPaidAt(CreatePaymentRequest request, String currency) {
+        LocalDateTime now = LocalDateTime.now();
+        if (request.soldAt() == null) return now;
+        if (request.cashierId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A cash sale needs its cashier");
+        }
+        if (request.soldAt().isAfter(now.plusMinutes(2))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The sale time is in the future");
+        }
+        if (request.soldAt().isBefore(now.minusDays(7))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Sales older than 7 days need a manager to check them");
+        }
+        boolean registerOpenThen = cashSessionRepository.existsByStoreIdAndCashierIdAndCurrencyCodeAndStatusAndOpenedAtLessThanEqual(
+                request.storeId(), request.cashierId(), currency, CashSessionStatus.OPEN, request.soldAt());
+        if (!registerOpenThen) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "The cash register was not open at the time of this sale. A manager needs to check it.");
+        }
+        return request.soldAt();
     }
 
     @Transactional(readOnly = true)
