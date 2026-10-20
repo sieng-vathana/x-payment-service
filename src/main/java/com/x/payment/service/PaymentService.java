@@ -2,6 +2,7 @@ package com.x.payment.service;
 
 import com.x.payment.alert.QrPaymentReceived;
 import com.x.payment.dto.*;
+import com.x.payment.realtime.PaymentStatusChanged;
 import com.x.payment.config.KhqrPayProperties;
 import com.x.payment.entity.*;
 import com.x.payment.gateway.BakongKhqrGenerator;
@@ -110,7 +111,7 @@ public class PaymentService {
 
     /**
      * Asks Bakong whether this KHQR has been paid and marks the payment PAID when the amount and
-     * currency match. The POS calls this every few seconds while the QR is on screen.
+     * currency match. BakongAutoCheck calls this for every open KHQR; the POS is told through the realtime service.
      */
     @Transactional
     public PaymentResponse checkBakong(Long id) {
@@ -139,6 +140,7 @@ public class PaymentService {
         payment.setStatus(PaymentStatus.PAID);
         payment.setPaidAt(LocalDateTime.now());
         Payment paid = paymentRepository.save(payment);
+        events.publishEvent(PaymentStatusChanged.of(paid));
         BakongTransactionClient.BakongTransaction settled = transaction.get();
         events.publishEvent(QrPaymentReceived.from(paid, false, settled.fromAccountId(),
                 settled.hash() != null ? settled.hash() : paid.getExternalReference()));
@@ -258,7 +260,9 @@ public class PaymentService {
 
         payment.setStatus(PaymentStatus.PAID);
         payment.setPaidAt(LocalDateTime.now());
-        return PaymentResponse.from(paymentRepository.save(payment));
+        Payment paid = paymentRepository.save(payment);
+        events.publishEvent(PaymentStatusChanged.of(paid));
+        return PaymentResponse.from(paid);
     }
 
     @Transactional(readOnly = true)
@@ -281,6 +285,7 @@ public class PaymentService {
         payment.setStatus(PaymentStatus.PAID);
         payment.setPaidAt(LocalDateTime.now());
         Payment paid = paymentRepository.save(payment);
+        events.publishEvent(PaymentStatusChanged.of(paid));
         if (paid.getMethod() == PaymentMethod.QR && paid.getProvider() == PaymentProvider.BAKONG) {
             events.publishEvent(QrPaymentReceived.from(paid, true));
         }
@@ -328,6 +333,7 @@ public class PaymentService {
         payment.setStatus(PaymentStatus.PAID);
         payment.setPaidAt(LocalDateTime.now());
         Payment paid = paymentRepository.save(payment);
+        events.publishEvent(PaymentStatusChanged.of(paid));
         events.publishEvent(QrPaymentReceived.from(paid, false));
         return PaymentResponse.from(paid);
     }
@@ -351,7 +357,9 @@ public class PaymentService {
         payment.setStatus(newRefunded.compareTo(payment.getAmount()) == 0
                 ? PaymentStatus.REFUNDED : PaymentStatus.PARTIALLY_REFUNDED);
         payment.setNote(trim(request.reason()));
-        return PaymentResponse.from(paymentRepository.save(payment));
+        Payment refunded = paymentRepository.save(payment);
+        events.publishEvent(PaymentStatusChanged.of(refunded));
+        return PaymentResponse.from(refunded);
     }
 
     @Transactional(readOnly = true)
