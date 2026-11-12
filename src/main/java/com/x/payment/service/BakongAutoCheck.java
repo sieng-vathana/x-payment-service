@@ -43,6 +43,11 @@ public class BakongAutoCheck {
     private final Map<Long, Instant> lastFailureNotice = new ConcurrentHashMap<>();
     private final Map<Long, Instant> lastChecked = new ConcurrentHashMap<>();
     private volatile Instant bakongPausedUntil = Instant.MIN;
+    /**
+     * While checks are paused, new KHQRs can be paid and then fall out of the 11-minute window unseen. After a pause,
+     * one round also covers every KHQR created since shortly before the pause began.
+     */
+    private volatile LocalDateTime catchUpFrom;
 
     public BakongAutoCheck(PaymentRepository paymentRepository, PaymentService paymentService, PaymentRealtime paymentRealtime) {
         this.paymentRepository = paymentRepository;
@@ -56,8 +61,11 @@ public class BakongAutoCheck {
         if (now.isBefore(bakongPausedUntil)) {
             return;
         }
+        LocalDateTime openSince = LocalDateTime.now().minus(OPEN_FOR);
+        LocalDateTime catchUp = catchUpFrom;
+        LocalDateTime since = catchUp != null && catchUp.isBefore(openSince) ? catchUp : openSince;
         for (Payment payment : paymentRepository.findByProviderAndMethodAndStatusAndCreatedAtAfter(
-                PaymentProvider.BAKONG, PaymentMethod.QR, PaymentStatus.PENDING, LocalDateTime.now().minus(OPEN_FOR))) {
+                PaymentProvider.BAKONG, PaymentMethod.QR, PaymentStatus.PENDING, since)) {
             Instant last = lastChecked.get(payment.getId());
             boolean firstMinute = payment.getCreatedAt() != null
                     && Duration.between(payment.getCreatedAt(), LocalDateTime.now()).compareTo(FAST_FOR) < 0;
@@ -70,6 +78,9 @@ public class BakongAutoCheck {
             if (now.isBefore(bakongPausedUntil)) {
                 break;
             }
+        }
+        if (catchUp != null && !Instant.now().isBefore(bakongPausedUntil)) {
+            catchUpFrom = null;
         }
         Instant cutoff = now.minus(OPEN_FOR);
         lastFailureNotice.keySet().removeIf(id -> lastFailureNotice.get(id).isBefore(cutoff));
@@ -87,6 +98,9 @@ public class BakongAutoCheck {
             String reason = exception.getReason() == null ? "Bakong could not be reached." : exception.getReason();
             if (reason.toLowerCase().contains("daily request limit")) {
                 bakongPausedUntil = Instant.now().plus(LIMIT_PAUSE);
+                if (catchUpFrom == null) {
+                    catchUpFrom = LocalDateTime.now().minus(OPEN_FOR);
+                }
                 log.warn("Bakong daily check limit reached; automatic checks paused until {}", bakongPausedUntil);
             }
             Instant last = lastFailureNotice.get(payment.getId());
