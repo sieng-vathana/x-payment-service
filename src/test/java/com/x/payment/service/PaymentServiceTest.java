@@ -1,6 +1,7 @@
 package com.x.payment.service;
 
 import com.x.payment.dto.ConfirmPaymentRequest;
+import com.x.payment.dto.CreateBakongQrPaymentRequest;
 import com.x.payment.dto.CreatePaymentRequest;
 import com.x.payment.dto.CreateQrPaymentRequest;
 import com.x.payment.dto.KhqrPayWebhookRequest;
@@ -12,6 +13,7 @@ import com.x.payment.entity.Payment;
 import com.x.payment.entity.PaymentMethod;
 import com.x.payment.entity.PaymentProvider;
 import com.x.payment.entity.PaymentStatus;
+import com.x.payment.gateway.BakongKhqrGenerator;
 import com.x.payment.gateway.BakongTransactionClient;
 import com.x.payment.gateway.QrPaymentGateway;
 import com.x.payment.gateway.QrPaymentInitiation;
@@ -23,6 +25,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -55,8 +58,29 @@ class PaymentServiceTest {
     private BakongTransactionClient bakongTransactionClient;
     @Mock
     private CashSessionRepository cashSessionRepository;
+    @Spy
+    private BakongKhqrGenerator bakongKhqrGenerator = new BakongKhqrGenerator();
     @InjectMocks
     private PaymentService paymentService;
+
+    @Test
+    void reloadingTheCheckoutShowsTheSameKhqrSoAnEarlierScanCanStillBeFound() {
+        CreateBakongQrPaymentRequest request = new CreateBakongQrPaymentRequest(
+                37L, 2L, 2L, new BigDecimal("4000"), "KHR", "marketplace-qr-guest-37", "Marketplace order",
+                null, "shop@bkrt", "Sota", "WEB-D7A1C18A-6EF");
+        when(paymentRepository.findByIdempotencyKey("marketplace-qr-guest-37")).thenReturn(Optional.empty());
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        QrPaymentResponse first = paymentService.createBakongQr(request);
+        ArgumentCaptor<Payment> saved = ArgumentCaptor.forClass(Payment.class);
+        verify(paymentRepository).save(saved.capture());
+        when(paymentRepository.findByIdempotencyKey("marketplace-qr-guest-37")).thenReturn(Optional.of(saved.getValue()));
+
+        QrPaymentResponse reloaded = paymentService.createBakongQr(request);
+
+        assertThat(reloaded.qrPayload()).isEqualTo(first.qrPayload());
+        assertThat(reloaded.transactionId()).isEqualTo(first.transactionId());
+        assertThat(saved.getValue().getExternalReference()).isEqualTo(first.transactionId());
+    }
 
     @Test
     void recordsCashAsPaidAndCalculatesChange() {

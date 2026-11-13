@@ -13,9 +13,9 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     Optional<Payment> findByIdempotencyKey(String idempotencyKey);
     Optional<Payment> findByExternalReference(String externalReference);
     List<Payment> findByOrderIdOrderByCreatedAtAsc(Long orderId);
-    List<Payment> findByProviderAndMethodAndStatusAndCreatedAtAfter(
+    List<Payment> findByProviderAndMethodAndStatusAndUpdatedAtAfter(
             com.x.payment.entity.PaymentProvider provider, com.x.payment.entity.PaymentMethod method,
-            com.x.payment.entity.PaymentStatus status, java.time.LocalDateTime createdAfter);
+            com.x.payment.entity.PaymentStatus status, java.time.LocalDateTime updatedAfter);
 
     @Query("""
             select coalesce(sum(p.amount), 0) as grossAmount,

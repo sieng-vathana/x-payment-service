@@ -29,7 +29,7 @@ class BakongAutoCheckTest {
 
     @Test
     void everyOpenKhqrIsCheckedWithBakong() {
-        when(repository.findByProviderAndMethodAndStatusAndCreatedAtAfter(
+        when(repository.findByProviderAndMethodAndStatusAndUpdatedAtAfter(
                 eq(PaymentProvider.BAKONG), eq(PaymentMethod.QR), eq(PaymentStatus.PENDING), any()))
                 .thenReturn(List.of(payment(41L), payment(42L)));
 

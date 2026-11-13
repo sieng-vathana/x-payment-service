@@ -65,6 +65,11 @@ public class BakongKhqrGenerator {
         return new BakongKhqr(data.getQr(), data.getMd5(), svgDataUrl(data.getQr()), expiresAt.toString());
     }
 
+    /** Redraws a KHQR made earlier, so the customer sees the same code (and Bakong the same MD5) again. */
+    public BakongKhqr redraw(String payload, String md5, LocalDateTime expiresAt) {
+        return new BakongKhqr(payload, md5, svgDataUrl(payload), expiresAt.toString());
+    }
+
     private KHQRCurrency khqrCurrency(String currencyCode) {
         String code = currencyCode == null ? "" : currencyCode.trim().toUpperCase(Locale.ROOT);
         return switch (code) {

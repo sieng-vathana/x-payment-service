@@ -56,6 +56,11 @@ public class Payment {
 
     @Column(name = "external_reference", length = 160)
     private String externalReference;
+    /** The KHQR shown to the customer, kept so a reloaded page shows the same code instead of a new one. */
+    @Column(name = "qr_payload", length = 600)
+    private String qrPayload;
+    @Column(name = "qr_expires_at")
+    private LocalDateTime qrExpiresAt;
     @Column(name = "idempotency_key", nullable = false, unique = true, length = 100)
     private String idempotencyKey;
     @Column(length = 500)

@@ -41,6 +41,8 @@ public class PaymentService {
     private static final long SIMULATED_PAYMENT_DELAY_SECONDS = 2L;
     private static final int SIMULATED_QR_MODULES = 29;
     private static final int SIMULATED_QR_MODULE_SIZE = 8;
+    /** A stored KHQR is shown again only while the customer still has time to pay it. */
+    private static final Duration QR_REUSE_MARGIN = Duration.ofSeconds(60);
     private final PaymentRepository paymentRepository;
     private final com.x.payment.repository.CashSessionRepository cashSessionRepository;
     private final QrPaymentGateway qrPaymentGateway;
@@ -87,11 +89,22 @@ public class PaymentService {
                 throw new ResponseStatusException(
                         HttpStatus.CONFLICT, "Idempotency key already belongs to a different payment");
             }
+            // A reloaded page must show the code the customer may already have paid. Bakong finds a payment
+            // only by the MD5 of the exact code that was scanned, so a new code would hide that payment.
+            boolean hasCode = existing.getQrPayload() != null && existing.getQrExpiresAt() != null;
+            boolean stillValid = hasCode && existing.getQrExpiresAt().isAfter(LocalDateTime.now().plus(QR_REUSE_MARGIN));
+            if (hasCode && (stillValid || existing.getStatus() != PaymentStatus.PENDING)) {
+                BakongKhqrGenerator.BakongKhqr same = bakongKhqrGenerator.redraw(
+                        existing.getQrPayload(), existing.getExternalReference(), existing.getQrExpiresAt());
+                return QrPaymentResponse.reused(PaymentResponse.from(existing), bakongInitiation(same));
+            }
             BakongKhqrGenerator.BakongKhqr khqr = bakongKhqrGenerator.generate(
                     request.bakongAccountId(), request.merchantName(), request.billNumber(),
                     existing.getAmount(), existing.getCurrencyCode());
             if (existing.getStatus() == PaymentStatus.PENDING) {
                 existing.setExternalReference(khqr.md5());
+                existing.setQrPayload(khqr.payload());
+                existing.setQrExpiresAt(LocalDateTime.parse(khqr.expiresAt()));
                 existing = paymentRepository.save(existing);
             }
             return QrPaymentResponse.reused(PaymentResponse.from(existing), bakongInitiation(khqr));
@@ -106,6 +119,7 @@ public class PaymentService {
                 .amount(amount).tenderedAmount(null).changeAmount(ZERO).refundedAmount(ZERO)
                 .currencyCode(currency).method(PaymentMethod.QR).provider(PaymentProvider.BAKONG)
                 .status(PaymentStatus.PENDING).externalReference(khqr.md5())
+                .qrPayload(khqr.payload()).qrExpiresAt(LocalDateTime.parse(khqr.expiresAt()))
                 .idempotencyKey(idempotencyKey).note(trim(request.note())).build();
         return QrPaymentResponse.created(PaymentResponse.from(paymentRepository.save(payment)), bakongInitiation(khqr));
     }
